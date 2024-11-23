@@ -13,5 +13,14 @@
     ],
     "idf.portWin": "COM3",
     "idf.pythonBinPathWin": "D:\\esp\\.espressif\\python_env\\idf5.3_py3.11_env\\Scripts\\python.exe",
-    "idf.toolsPathWin": "D:\\esp\\.espressif"
+    "idf.toolsPathWin": "D:\\esp\\.espressif",
+    "idf.flashType": "JTAG",
+    "files.associations": {
+        "string.h": "c",
+        "esp_zigbee_ha_standard.h": "c",
+        "esp_log.h": "c",
+        "toggle.h": "c",
+        "light_driver.h": "c",
+        "led_strip.h": "c"
+    }
 }
