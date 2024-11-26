@@ -69,7 +69,7 @@ extern "C"
      * @param button_num            number of button pair.
      * @param cb                    callback pointer.
      */
-    bool switch_driver_init(switch_func_pair_t *button_func_pair, uint8_t button_num, esp_switch_callback_t cb);
+    esp_err_t switch_driver_init(switch_func_pair_t *button_func_pair, uint8_t button_num, esp_switch_callback_t cb);
 
 #ifdef __cplusplus
 } // extern "C"

@@ -35,7 +35,7 @@ static void zb_buttons_handler(switch_func_pair_t *button_func_pair)
     if (button_func_pair->func == SWITCH_ONOFF_TOGGLE_CONTROL)
     {
         ESP_LOGI(TAG, "Button on GPIO %lu pressed", button_func_pair->pin);
-        toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 2000);
+        toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
         /* implemented light switch toggle functionality */
         // esp_zb_zcl_on_off_cmd_t cmd_req;
         // cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;

@@ -13,6 +13,8 @@
  */
 
 #include "esp_log.h"
+#include "esp_check.h"
+#include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -43,7 +45,10 @@ static void switch_driver_gpios_intr_enabled(bool enabled);
 static void IRAM_ATTR gpio_isr_handler(void *arg)
 {
     switch_driver_gpios_intr_enabled(false);
-    xQueueSendFromISR(gpio_evt_queue, (switch_func_pair_t *)arg, NULL);
+    // debounce ?
+    // store new gpio value
+    //
+    xQueueSendToBackFromISR(gpio_evt_queue, (switch_func_pair_t *)arg, NULL);
 }
 
 /**
@@ -123,7 +128,7 @@ static void switch_driver_button_detected(void *arg)
  * @param button_func_pair      pointer of the button pair.
  * @param button_num            number of button pair.
  */
-static bool switch_driver_gpio_init(switch_func_pair_t *button_func_pair, uint8_t button_num)
+static esp_err_t switch_driver_gpio_init(switch_func_pair_t *button_func_pair, uint8_t button_num)
 {
     gpio_config_t io_conf = {};
     switch_func_pair = button_func_pair;
@@ -136,19 +141,19 @@ static bool switch_driver_gpio_init(switch_func_pair_t *button_func_pair, uint8_
         pin_bit_mask |= (1ULL << (button_func_pair + i)->pin);
     }
     /* interrupt of falling edge */
-    io_conf.intr_type = GPIO_INTR_LOW_LEVEL;
+    io_conf.intr_type = GPIO_INTR_ANYEDGE;
     io_conf.pin_bit_mask = pin_bit_mask;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_down_en = 0;
     io_conf.pull_up_en = 1;
     /* configure GPIO with the given settings */
-    gpio_config(&io_conf);
+    ESP_RETURN_ON_ERROR(gpio_config(&io_conf), TAG, "Unable to configure GPIOs.");
     /* create a queue to handle gpio event from isr */
     gpio_evt_queue = xQueueCreate(10, sizeof(switch_func_pair_t));
     if (gpio_evt_queue == 0)
     {
         ESP_LOGE(TAG, "Queue was not created and must not be used");
-        return false;
+        return ESP_ERR_INVALID_STATE;
     }
     /* start gpio task */
     xTaskCreate(switch_driver_button_detected, "button_detected", 4096, NULL, 10, NULL);
@@ -158,15 +163,14 @@ static bool switch_driver_gpio_init(switch_func_pair_t *button_func_pair, uint8_
     {
         gpio_isr_handler_add((button_func_pair + i)->pin, gpio_isr_handler, (void *)(button_func_pair + i));
     }
-    return true;
+
+    return ESP_OK;
 }
 
-bool switch_driver_init(switch_func_pair_t *button_func_pair, uint8_t button_num, esp_switch_callback_t cb)
+esp_err_t switch_driver_init(switch_func_pair_t *button_func_pair, uint8_t button_num, esp_switch_callback_t cb)
 {
-    if (!switch_driver_gpio_init(button_func_pair, button_num))
-    {
-        return false;
-    }
+    ESP_RETURN_ON_ERROR(switch_driver_gpio_init(button_func_pair, button_num), TAG, "GPIO setup failed");
     func_ptr = cb;
-    return true;
+
+    return ESP_OK;
 }
