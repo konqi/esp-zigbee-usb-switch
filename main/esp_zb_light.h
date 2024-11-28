@@ -14,7 +14,7 @@
 
 #include "esp_zigbee_core.h"
 #include "light_driver.h"
-#include "switch_driver.h"
+#include "gpio_input.h"
 #include "toggle.h"
 #include "zcl_utility.h"
 

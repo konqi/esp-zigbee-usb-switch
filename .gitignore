@@ -2,3 +2,6 @@ build/
 sdkconfig
 sdkconfig.old
 managed_components/
+.vscode/settings.json
+.vscode/c_cpp_properties.json
+*.log

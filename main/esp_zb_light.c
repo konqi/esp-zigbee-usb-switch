@@ -24,35 +24,22 @@
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile light (End Device) source code.
 #endif
 
-static switch_func_pair_t button_func_pair[] = {
-    {GPIO_INPUT_IO_TOGGLE_SWITCH_1, SWITCH_ONOFF_TOGGLE_CONTROL},
-    {GPIO_INPUT_IO_TOGGLE_SWITCH_2, SWITCH_ONOFF_TOGGLE_CONTROL}};
-
 static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
-/********************* Define functions **************************/
-static void zb_buttons_handler(switch_func_pair_t *button_func_pair)
+
+static int gpio_inputs[] = {GPIO_NUM_18, GPIO_NUM_19};
+
+static void debounced_input_handler(int gpio_num, int value)
 {
-    if (button_func_pair->func == SWITCH_ONOFF_TOGGLE_CONTROL)
-    {
-        ESP_LOGI(TAG, "Button on GPIO %lu pressed", button_func_pair->pin);
-        toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
-        /* implemented light switch toggle functionality */
-        // esp_zb_zcl_on_off_cmd_t cmd_req;
-        // cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
-        // cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
-        // cmd_req.on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_TOGGLE_ID;
-        // esp_zb_lock_acquire(portMAX_DELAY);
-        // esp_zb_zcl_on_off_cmd_req(&cmd_req);
-        // esp_zb_lock_release();
-        // ESP_EARLY_LOGI(TAG, "Send 'on_off toggle' command");
-    }
+    ESP_LOGI(TAG, "GPIO %i is now %i", gpio_num, value);
+    toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
 }
 
 static esp_err_t deferred_driver_init(void)
 {
     light_driver_init(LIGHT_DEFAULT_OFF);
-    ESP_RETURN_ON_FALSE(switch_driver_init(button_func_pair, PAIR_SIZE(button_func_pair), zb_buttons_handler), ESP_FAIL, TAG,
-                        "Failed to initialize switch driver");
+    // ESP_RETURN_ON_FALSE(switch_driver_init(button_func_pair, PAIR_SIZE(button_func_pair), zb_buttons_handler), ESP_FAIL, TAG,
+    //                     "Failed to initialize switch driver");
+    ESP_RETURN_ON_ERROR(gpio_debounce_input_init(gpio_inputs, 2, debounced_input_handler), TAG, "Failed to initialize debounced inputs.");
     ESP_RETURN_ON_ERROR(toggle_driver_gpio_init(GPIO_OUTPUT_IO_TOGGLE_SWITCH), TAG,
                         "Failed to initialize toggle driver");
     return ESP_OK;
@@ -60,7 +47,7 @@ static esp_err_t deferred_driver_init(void)
 
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
 {
-    ESP_RETURN_ON_FALSE(esp_zb_bdb_start_top_level_commissioning(mode_mask) == ESP_OK, , TAG, "Failed to start Zigbee commissioning");
+    ESP_RETURN_ON_ERROR(esp_zb_bdb_start_top_level_commissioning(mode_mask), TAG, "Failed to start Zigbee commissioning");
 }
 
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
@@ -181,12 +168,6 @@ static void esp_zb_task(void *pvParameters)
 
 void app_main(void)
 {
-    // TODO:
-    // 1. use PCB soldered led instead of light strip
-    // 2. short circuit two pins as actor
-    // 3. read voltage over led (needed twice, or trice if power signal is relevant too)
-    // 4. expose read values
-    // 5. allow setting to specific input, based on outputs
     esp_zb_platform_config_t config = {
         .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
         .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
