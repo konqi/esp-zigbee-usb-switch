@@ -1,15 +1,6 @@
 /*
- * SPDX-FileCopyrightText: 2021-2022 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: CC0-1.0
- *
- * Zigbee HA_on_off_light Example
- *
- * This example code is in the Public Domain (or CC0 licensed, at your option.)
- *
- * Unless required by applicable law or agreed to in writing, this
- * software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
- * CONDITIONS OF ANY KIND, either express or implied.
+ * TODO:
+ * - Add reset Button to enter pairing mode (esp_zb_bdb_reset_via_local_action)
  */
 #include "esp_zb_light.h"
 #include "esp_check.h"
@@ -32,6 +23,48 @@ static void debounced_input_handler(int gpio_num, int value)
 {
     ESP_LOGI(TAG, "GPIO %i is now %i", gpio_num, value);
     toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
+
+    if (value == 1)
+    {
+        int new_value = -1;
+        switch (gpio_num)
+        {
+        case GPIO_NUM_18:
+            new_value = 0;
+            break;
+        case GPIO_NUM_19:
+            new_value = 1;
+            break;
+        default:
+            break;
+        }
+
+        if (new_value >= 0)
+        {
+            esp_zb_lock_acquire(portMAX_DELAY);
+            esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(HA_ESP_LIGHT_ENDPOINT,
+                                                                      ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE,
+                                                                      ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+                                                                      ESP_ZB_ZCL_ATTR_MULTI_VALUE_PRESENT_VALUE_ID,
+                                                                      &new_value,
+                                                                      false);
+            esp_zb_lock_release();
+            ESP_LOGI(TAG, "Multistate value updated to %i, status %i", new_value, status);
+
+            // esp_zb_zcl_report_attr_cmd_t report_attr_cmd = {
+            //     .address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
+            //     .clusterID = ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE,
+            //     .attributeID = ESP_ZB_ZCL_ATTR_MULTI_VALUE_PRESENT_VALUE_ID,
+            //     .direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV, // ESP_ZB_ZCL_CMD_DIRECTION_TO_CLI,
+            //     .zcl_basic_cmd.src_endpoint = HA_ESP_LIGHT_ENDPOINT,
+            // };
+
+            // esp_zb_lock_acquire(portMAX_DELAY);
+            // ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
+            // esp_zb_lock_release();
+            // ESP_LOGI(TAG, "Multistate value reported");
+        }
+    }
 }
 
 static esp_err_t deferred_driver_init(void)
@@ -45,9 +78,11 @@ static esp_err_t deferred_driver_init(void)
     return ESP_OK;
 }
 
-static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
+static esp_err_t bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
 {
     ESP_RETURN_ON_ERROR(esp_zb_bdb_start_top_level_commissioning(mode_mask), TAG, "Failed to start Zigbee commissioning");
+
+    return ESP_OK;
 }
 
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
@@ -118,7 +153,11 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
              message->attribute.id, message->attribute.data.size);
     if (message->info.dst_endpoint == HA_ESP_LIGHT_ENDPOINT)
     {
-        if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF)
+        if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE && message->attribute.id == ESP_ZB_ZCL_ATTR_MULTI_VALUE_PRESENT_VALUE_ID)
+        {
+            ESP_LOGW(TAG, "Wait a minute... who said you may write this?");
+        }
+        else if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF)
         {
             if (message->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_BOOL)
             {
@@ -139,8 +178,18 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
     case ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID:
         ret = zb_attribute_handler((esp_zb_zcl_set_attr_value_message_t *)message);
         break;
+    case ESP_ZB_CORE_CMD_DEFAULT_RESP_CB_ID:
+        esp_zb_zcl_cmd_default_resp_message_t *msg = (esp_zb_zcl_cmd_default_resp_message_t *)message;
+        // cmd 10 = report attributes
+        ESP_LOGI(TAG, "Received reponse (0x%02x) to cmd(0x%02x) endpoint(%i) cluster(%i) status(0x%02x)",
+                 ESP_ZB_CORE_CMD_DEFAULT_RESP_CB_ID,
+                 msg->resp_to_cmd,
+                 msg->info.dst_endpoint,
+                 msg->info.cluster,
+                 msg->info.status);
+        break;
     default:
-        ESP_LOGW(TAG, "Receive Zigbee action(0x%x) callback", callback_id);
+        ESP_LOGW(TAG, "Receive Zigbee action(0x%02x) callback", callback_id);
         break;
     }
     return ret;
@@ -151,15 +200,57 @@ static void esp_zb_task(void *pvParameters)
     /* initialize Zigbee stack */
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZED_CONFIG();
     esp_zb_init(&zb_nwk_cfg);
+
+    // create empty endpoint list
+    esp_zb_ep_list_t *endpoint_list = esp_zb_ep_list_create();
+
+    // create cluster for on_off_light configuration
     esp_zb_on_off_light_cfg_t light_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
-    esp_zb_ep_list_t *esp_zb_on_off_light_ep = esp_zb_on_off_light_ep_create(HA_ESP_LIGHT_ENDPOINT, &light_cfg);
+    esp_zb_cluster_list_t *cluster_list = esp_zb_on_off_light_clusters_create(&light_cfg);
+
+    esp_zb_multistate_value_cluster_cfg_t multistate_config = {
+        .number_of_states = 2,
+        .out_of_service = false,
+        .present_value = 0,
+        .status_flags = 0,
+    };
+    esp_zb_attribute_list_t *multistate_cluster = esp_zb_multistate_value_cluster_create(&multistate_config);
+    esp_zb_attribute_list_t *attr = multistate_cluster;
+    // enable reporting of present value (see https://github.com/espressif/esp-zigbee-sdk/issues/372#issuecomment-2213952627)
+    ESP_LOGI(TAG, "0: attributeId(0x%02x) access(0x%02x)", multistate_cluster->attribute.id, multistate_cluster->attribute.access);
+
+    while (attr)
+    {
+        if (attr->attribute.id == ESP_ZB_ZCL_ATTR_MULTI_VALUE_PRESENT_VALUE_ID)
+        {
+            ESP_LOGI(TAG, "1: attributeId(0x%02x) access(0x%02x)", attr->attribute.id, attr->attribute.access);
+            attr->attribute.access = /* attr->attribute.access | */ ESP_ZB_ZCL_ATTR_ACCESS_REPORTING | ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY;
+            ESP_LOGI(TAG, "2: attributeId(0x%02x) access(0x%02x)", attr->attribute.id, attr->attribute.access);
+            break;
+        }
+        attr = attr->next;
+    }
+
+    // TODO: might be necessary to add the cluster to a different endpoint
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_cluster_list_add_multistate_value_cluster(cluster_list, multistate_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+
+    // add endpoint with clusters to list
+    esp_zb_endpoint_config_t ep_config = {
+        .endpoint = HA_ESP_LIGHT_ENDPOINT,
+        .app_device_id = ESP_ZB_HA_ON_OFF_OUTPUT_DEVICE_ID,
+        .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
+        .app_device_version = 1,
+    };
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ep_list_add_ep(endpoint_list, cluster_list, ep_config));
+
+    // add zcl basic cluster
     zcl_basic_manufacturer_info_t info = {
         .manufacturer_name = ESP_MANUFACTURER_NAME,
         .model_identifier = ESP_MODEL_IDENTIFIER,
     };
+    esp_zcl_utility_add_ep_basic_manufacturer_info(endpoint_list, HA_ESP_LIGHT_ENDPOINT, &info);
 
-    esp_zcl_utility_add_ep_basic_manufacturer_info(esp_zb_on_off_light_ep, HA_ESP_LIGHT_ENDPOINT, &info);
-    esp_zb_device_register(esp_zb_on_off_light_ep);
+    esp_zb_device_register(endpoint_list);
     esp_zb_core_action_handler_register(zb_action_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
     ESP_ERROR_CHECK(esp_zb_start(false));
