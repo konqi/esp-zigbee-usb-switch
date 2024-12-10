@@ -7,22 +7,6 @@
 
 static const char *TAG = "GPIO_DEBOUNCED_INPUT";
 
-// typedef enum
-// {
-//     INPUT_ON,
-//     INPUT_OFF,
-// } input_state_t;
-
-// typedef struct
-// {
-//     uint32_t pin;
-//     input_state_t state;
-// } debounced_input_cb_params_t;
-
-// typedef void (*esp_switch_callback_t)(debounced_input_cb_params_t *param);
-
-// static int gpio_debounce_inputs[] = {GPIO_NUM_18, GPIO_NUM_19};
-
 static uint8_t gpio_count = 0;
 static gpio_input_debounce_config_t *internal_config = NULL; /* pointer to array */
 static debounced_input_callback callback = NULL;
@@ -35,9 +19,9 @@ static void IRAM_ATTR gpio_interrupt_handler(void *arg)
     input_debounce_helper->interrupt_cnt++;
     input_debounce_helper->last_state = gpio_get_level(input_debounce_helper->gpio_num);
     input_debounce_helper->debounce_timeout = xTaskGetTickCountFromISR();
-    // ESP_LOGI(TAG, "ISR for %i", input_debounce_helper->gpio_num);
 }
 
+static const uint16_t debounce_loop_delay_ticks = 50 / portTICK_PERIOD_MS;
 static void debounce_gpio_input_loop_task()
 {
     for (;;)
@@ -50,10 +34,10 @@ static void debounce_gpio_input_loop_task()
 
             if ( // interrupt triggerd
                 gpio_helper->interrupt_cnt != 0 &&
-                // debounce time has expired
-                (xTaskGetTickCount() - gpio_helper->debounce_timeout > DEBOUNCE_TICKS) &&
                 // the input is still in the same state
-                gpio_state == gpio_helper->last_state)
+                gpio_state == gpio_helper->last_state &&
+                // check debounce time has expired
+                (xTaskGetTickCount() - gpio_helper->debounce_timeout > DEBOUNCE_TICKS))
             {
                 // gpio_state is stable
                 ESP_LOGD(TAG, "gpio %i apprears to be stable in state %i", gpio_num, gpio_state);
@@ -64,9 +48,22 @@ static void debounce_gpio_input_loop_task()
                 // reset
                 gpio_helper->interrupt_cnt = 0;
             }
+
+            if ( // no other interrupt was triggered (button still pressed)
+                gpio_helper->interrupt_cnt == 0 &&
+                // long enough for a long press
+                (xTaskGetTickCount() - gpio_helper->debounce_timeout > LONG_PRESS_TICKS) &&
+                // only trigger once
+                (xTaskGetTickCount() - gpio_helper->debounce_timeout < LONG_PRESS_TICKS + debounce_loop_delay_ticks))
+            {
+                ESP_LOGV(TAG, "long stable state on gpio %i in state %i", gpio_num, gpio_state);
+
+                // trigger callback
+                callback(gpio_num, gpio_state + 2);
+            }
         }
 
-        vTaskDelay(50 / portTICK_PERIOD_MS);
+        vTaskDelay(debounce_loop_delay_ticks);
     }
 }
 
@@ -131,6 +128,9 @@ esp_err_t gpio_debounce_input_init(int gpio_debounce_inputs[], int number_of_inp
         internal_config[i].debounce_timeout = 0;
         internal_config[i].last_state = gpio_get_level(gpio_num);
         internal_config[i].interrupt_cnt = 0;
+
+        // trigger callback with initial value
+        callback(gpio_num, internal_config[i].last_state);
 
         ESP_RETURN_ON_ERROR(
             gpio_isr_handler_add(gpio_num, gpio_interrupt_handler, (void *)&(internal_config[i])),

@@ -14,7 +14,17 @@ extern "C"
 
 #define COUNT_ARRAY_ELEMENTS(ARRAY_TYPE) (sizeof(ARRAY_TYPE) / sizeof(ARRAY_TYPE[0]))
 #define DEBOUNCE_TICKS 25
-    typedef void (*debounced_input_callback)(int gpio_num, int value);
+#define LONG_PRESS_TICKS 400
+
+    typedef enum gpio_input_state_enum
+    {
+        ON = 0,
+        OFF = 1,
+        ON_LONG = 2,
+        OFF_LONG = 3
+    } gpio_input_state_t;
+
+    typedef void (*debounced_input_callback)(int gpio_num, gpio_input_state_t value);
 
     typedef struct gpio_input_debounce_config_t
     {

@@ -19,28 +19,41 @@ static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
 
 static int gpio_inputs[] = {GPIO_NUM_18, GPIO_NUM_19};
 
-static void debounced_input_handler(int gpio_num, int value)
+typedef enum usb_switch_state_enum
+{
+    CH_1 = 0,
+    CH_2 = 1,
+    UNKNOWN = 2
+} usb_switch_state_t;
+
+static usb_switch_state_t usb_switch_state = UNKNOWN;
+
+static void debounced_input_handler(int gpio_num, gpio_input_state_t value)
 {
     ESP_LOGI(TAG, "GPIO %i is now %i", gpio_num, value);
-    toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
+    // the following line can be enabled, this effectively creates a flip-flop for the inputs (good for testing connections)
+    // toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
 
-    if (value == 1)
+    if (value == ON)
     {
-        int new_value = -1;
+        usb_switch_state_t new_value = UNKNOWN;
         switch (gpio_num)
         {
         case GPIO_NUM_18:
-            new_value = 0;
+            new_value = CH_1;
             break;
         case GPIO_NUM_19:
-            new_value = 1;
+            new_value = CH_2;
             break;
         default:
             break;
         }
 
-        if (new_value >= 0)
+        if (new_value != UNKNOWN)
         {
+            usb_switch_state = new_value;
+            ESP_LOGI(TAG, "USB Switch state is now %i", new_value);
+
             esp_zb_lock_acquire(portMAX_DELAY);
             esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(HA_ESP_LIGHT_ENDPOINT,
                                                                       ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE,
@@ -51,6 +64,7 @@ static void debounced_input_handler(int gpio_num, int value)
             esp_zb_lock_release();
             ESP_LOGI(TAG, "Multistate value updated to %i, status %i", new_value, status);
 
+            // manual report of attribute (not necessary)
             // esp_zb_zcl_report_attr_cmd_t report_attr_cmd = {
             //     .address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
             //     .clusterID = ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE,
@@ -110,6 +124,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             else
             {
                 ESP_LOGI(TAG, "Device rebooted");
+
+                // toggle once to get current state safely
+                // toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
             }
         }
         else
@@ -155,7 +172,15 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
     {
         if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE && message->attribute.id == ESP_ZB_ZCL_ATTR_MULTI_VALUE_PRESENT_VALUE_ID)
         {
-            ESP_LOGW(TAG, "Wait a minute... who said you may write this?");
+            // determine value
+            uint16_t desired_state = *(uint16_t *)message->attribute.data.value;
+            ESP_LOGI(TAG, "Received state change to value %i", desired_state);
+            // check if toggle is required
+            if (desired_state != usb_switch_state)
+            {
+                ESP_LOGI(TAG, "Switch not in desired state. Toggeling");
+                toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
+            }
         }
         else if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF)
         {
@@ -167,6 +192,7 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
             }
         }
     }
+
     return ret;
 }
 
@@ -217,15 +243,16 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_attribute_list_t *multistate_cluster = esp_zb_multistate_value_cluster_create(&multistate_config);
     esp_zb_attribute_list_t *attr = multistate_cluster;
     // enable reporting of present value (see https://github.com/espressif/esp-zigbee-sdk/issues/372#issuecomment-2213952627)
-    ESP_LOGI(TAG, "0: attributeId(0x%02x) access(0x%02x)", multistate_cluster->attribute.id, multistate_cluster->attribute.access);
+    ESP_LOGV(TAG, "0: attributeId(0x%02x) access(0x%02x)", multistate_cluster->attribute.id, multistate_cluster->attribute.access);
 
     while (attr)
     {
         if (attr->attribute.id == ESP_ZB_ZCL_ATTR_MULTI_VALUE_PRESENT_VALUE_ID)
         {
-            ESP_LOGI(TAG, "1: attributeId(0x%02x) access(0x%02x)", attr->attribute.id, attr->attribute.access);
-            attr->attribute.access = /* attr->attribute.access | */ ESP_ZB_ZCL_ATTR_ACCESS_REPORTING | ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY;
-            ESP_LOGI(TAG, "2: attributeId(0x%02x) access(0x%02x)", attr->attribute.id, attr->attribute.access);
+            ESP_LOGV(TAG, "1: attributeId(0x%02x) access(0x%02x)", attr->attribute.id, attr->attribute.access);
+            // by default the attribute is writeable, use only ESP_ZB_ZCL_ATTR_ACCESS_REPORTING | ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY to disable write
+            attr->attribute.access = attr->attribute.access | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING;
+            ESP_LOGV(TAG, "2: attributeId(0x%02x) access(0x%02x)", attr->attribute.id, attr->attribute.access);
             break;
         }
         attr = attr->next;

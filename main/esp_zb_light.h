@@ -34,9 +34,10 @@
 #define GPIO_OUTPUT_IO_TOGGLE_SWITCH GPIO_NUM_20
 
 /* Basic manufacturer information */
-#define ESP_MANUFACTURER_NAME "\x09" \
-                              "ESPRESSIF"             /* Customized manufacturer name */
-#define ESP_MODEL_IDENTIFIER "\x07" CONFIG_IDF_TARGET /* Customized model identifier */
+#define ESP_MANUFACTURER_NAME "\x05" \
+                              "KONQI" /* Customized manufacturer name */
+#define ESP_MODEL_IDENTIFIER "\x11" \
+                             "zigbee-usb-switch" /* Customized model identifier */
 
 #define ESP_ZB_ZED_CONFIG()                               \
     {                                                     \
