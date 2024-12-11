@@ -160,9 +160,6 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             else
             {
                 ESP_LOGI(TAG, "Device rebooted");
-
-                // toggle once to get current state safely
-                // toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
             }
         }
         else
@@ -180,6 +177,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                      extended_pan_id[7], extended_pan_id[6], extended_pan_id[5], extended_pan_id[4],
                      extended_pan_id[3], extended_pan_id[2], extended_pan_id[1], extended_pan_id[0],
                      esp_zb_get_pan_id(), esp_zb_get_current_channel(), esp_zb_get_short_address());
+
+            // toggle once to get current state safely
+            toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
         }
         else
         {
