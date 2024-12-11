@@ -58,6 +58,12 @@ const definition = {
     const endpoint = device.getEndpoint(10);
     // await endpoint.read("genMultistateValue", ["presentValue"]);
     await endpoint.bind("genMultistateValue", coordinatorEndpoint);
+    await endpoint.configureReporting("genMultistateValue", {
+      attribute: "presentValue",
+      minimumReportInterval: 0,
+      maximumReportInterval: 3600,
+      reportableChange: 1,
+    });
   },
   meta: {},
 };
