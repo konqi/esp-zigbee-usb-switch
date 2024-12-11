@@ -17,7 +17,10 @@
 
 static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
 
-static int gpio_inputs[] = {GPIO_NUM_18, GPIO_NUM_19};
+const int gpio_inputs[] = {GPIO_NUM_9, GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_21};
+
+// this only works as long as gpio_inputs is const
+#define INPUT_GPIO_LEN sizeof(gpio_inputs) / sizeof(int)
 
 typedef enum usb_switch_state_enum
 {
@@ -27,6 +30,31 @@ typedef enum usb_switch_state_enum
 } usb_switch_state_t;
 
 static usb_switch_state_t usb_switch_state = UNKNOWN;
+static uint8_t reset_counter = 0;
+
+void reset_by_toggle(int gpio_num, gpio_input_state_t value)
+{
+    if (gpio_num == GPIO_NUM_18 || gpio_num == GPIO_NUM_19)
+    {
+        if (value == ON_LONG)
+        {
+            // reset counter
+            reset_counter = 0;
+        }
+        else if (value == ON)
+        {
+            // increase reset counter
+            ++reset_counter;
+
+            if (reset_counter > 10)
+            {
+                ESP_LOGI(TAG, "Resetting device.");
+                esp_zb_factory_reset();
+                reset_counter = 0;
+            }
+        }
+    }
+}
 
 static void debounced_input_handler(int gpio_num, gpio_input_state_t value)
 {
@@ -34,18 +62,25 @@ static void debounced_input_handler(int gpio_num, gpio_input_state_t value)
     // the following line can be enabled, this effectively creates a flip-flop for the inputs (good for testing connections)
     // toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
 
+    reset_by_toggle(gpio_num, value);
+
     if (value == ON)
     {
         usb_switch_state_t new_value = UNKNOWN;
         switch (gpio_num)
         {
         case GPIO_NUM_18:
-            new_value = CH_1;
-            break;
-        case GPIO_NUM_19:
             new_value = CH_2;
             break;
+        case GPIO_NUM_19:
+            new_value = CH_1;
+            break;
+        case GPIO_NUM_9:
+            ESP_LOGI(TAG, "Resetting device.");
+            esp_zb_factory_reset();
+            break;
         default:
+            ESP_LOGW(TAG, "Pressing GPIO %i isn't defined.", gpio_num);
             break;
         }
 
@@ -86,7 +121,8 @@ static esp_err_t deferred_driver_init(void)
     light_driver_init(LIGHT_DEFAULT_OFF);
     // ESP_RETURN_ON_FALSE(switch_driver_init(button_func_pair, PAIR_SIZE(button_func_pair), zb_buttons_handler), ESP_FAIL, TAG,
     //                     "Failed to initialize switch driver");
-    ESP_RETURN_ON_ERROR(gpio_debounce_input_init(gpio_inputs, 2, debounced_input_handler), TAG, "Failed to initialize debounced inputs.");
+    ESP_LOGI(TAG, "Configuring %i pins for input", INPUT_GPIO_LEN);
+    ESP_RETURN_ON_ERROR(gpio_debounce_input_init(gpio_inputs, INPUT_GPIO_LEN, debounced_input_handler), TAG, "Failed to initialize debounced inputs.");
     ESP_RETURN_ON_ERROR(toggle_driver_gpio_init(GPIO_OUTPUT_IO_TOGGLE_SWITCH), TAG,
                         "Failed to initialize toggle driver");
     return ESP_OK;
