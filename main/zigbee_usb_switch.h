@@ -1,15 +1,6 @@
 /*
- * SPDX-FileCopyrightText: 2021-2022 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: CC0-1.0
- *
- * Zigbee HA_on_off_light Example
- *
- * This example code is in the Public Domain (or CC0 licensed, at your option.)
- *
- * Unless required by applicable law or agreed to in writing, this
- * software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
- * CONDITIONS OF ANY KIND, either express or implied.
+ * Main entry file for zigbee-usb-switch project
+ * based on the espressif zigbee home automation (ha) light on/off example
  */
 
 #include "esp_zigbee_core.h"
@@ -21,16 +12,14 @@
 /* Zigbee configuration */
 #define INSTALLCODE_POLICY_ENABLE false /* enable the install code policy for security */
 #define ED_AGING_TIMEOUT ESP_ZB_ED_AGING_TIMEOUT_64MIN
-#define ED_KEEP_ALIVE 3000       /* 3000 millisecond */
-#define HA_ESP_LIGHT_ENDPOINT 10 /* esp light bulb device endpoint, used to process light controlling commands */
-// #define HA_ONOFF_SWITCH_ENDPOINT 1                                       /* esp light switch device endpoint */
+#define ED_KEEP_ALIVE 3000                                               /* 3000 millisecond */
+#define HA_ESP_LIGHT_ENDPOINT 10                                         /* esp light bulb device endpoint, used to process light controlling commands */
 #define ESP_ZB_PRIMARY_CHANNEL_MASK ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK /* Zigbee primary channel mask use in the example */
 
 /* GPIO Inputs configuration */
 /* user should configure which I/O port as toggle switch input, default is GPIO9 */
 #define GPIO_INPUT_IO_TOGGLE_SWITCH_1 GPIO_NUM_18
 #define GPIO_INPUT_IO_TOGGLE_SWITCH_2 GPIO_NUM_19
-
 #define GPIO_OUTPUT_IO_TOGGLE_SWITCH GPIO_NUM_20
 
 /* Basic manufacturer information */

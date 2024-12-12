@@ -1,8 +1,9 @@
 /*
- * TODO:
- * - Add reset Button to enter pairing mode (esp_zb_bdb_reset_via_local_action)
+ * This code is based on the espressif zigbee home automation (ha) light on/off example
+ * The LED ON/OFF functionality is simply left in here, because it's a great way to
+ * determine if the zigbee communication works at all.
  */
-#include "esp_zb_light.h"
+#include "zigbee_usb_switch.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -17,6 +18,9 @@
 
 static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
 
+// Note: On my board GPIO_NUM_21 is soldered as input to the external button.
+// That experiment didn't work out but I'm too lazy to desolder the IC...
+// You don't need to configure GPIO_NUM_21 if it is not connected.
 const int gpio_inputs[] = {GPIO_NUM_9, GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_21};
 
 // this only works as long as gpio_inputs is const
@@ -178,8 +182,8 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                      extended_pan_id[3], extended_pan_id[2], extended_pan_id[1], extended_pan_id[0],
                      esp_zb_get_pan_id(), esp_zb_get_current_channel(), esp_zb_get_short_address());
 
-            // toggle once to get current state safely
-            toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
+            // read values once after zigbee initialization
+            gpio_read_once();
         }
         else
         {

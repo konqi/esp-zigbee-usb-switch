@@ -30,7 +30,7 @@ static void debounce_gpio_input_loop_task()
         {
             gpio_input_debounce_config_t *gpio_helper = &(internal_config[i]);
             int gpio_num = gpio_helper->gpio_num;
-            int gpio_state = gpio_get_level(gpio_num);
+            gpio_input_state_t gpio_state = gpio_get_level(gpio_num);
 
             if ( // interrupt triggerd
                 gpio_helper->interrupt_cnt != 0 &&
@@ -130,7 +130,8 @@ esp_err_t gpio_debounce_input_init(int gpio_debounce_inputs[], int number_of_inp
         internal_config[i].interrupt_cnt = 0;
 
         // trigger callback with initial value
-        callback(gpio_num, internal_config[i].last_state);
+        // if you think about enableing this, take a look at the gpio_read_once() function
+        // callback(gpio_num, internal_config[i].last_state);
 
         ESP_RETURN_ON_ERROR(
             gpio_isr_handler_add(gpio_num, gpio_interrupt_handler, (void *)&(internal_config[i])),
@@ -139,4 +140,21 @@ esp_err_t gpio_debounce_input_init(int gpio_debounce_inputs[], int number_of_inp
     }
 
     return ESP_OK;
+}
+
+/**
+ * Reads all configured inputs once and triggers a callback on each.
+ * The value in the callback is poentially a snapshot that needs debouncing.
+ */
+void gpio_read_once()
+{
+    for (int i = 0; i < gpio_count; i++)
+    {
+        // Add gpio isr handlers with
+        int gpio_num = internal_config[i].gpio_num;
+        gpio_input_state_t last_state = gpio_get_level(gpio_num);
+
+        // trigger callback with initial value
+        callback(gpio_num, last_state);
+    }
 }
