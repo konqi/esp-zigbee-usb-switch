@@ -38,7 +38,7 @@ The switch is connected like this:
 
 Current flows from the bottom to the top contact. Make sure that the top pin is connected to the collector of the optocoupler and the lower one to the emitter.
 
-## Power suppy
+## Power supply
 
 My USB-Switch allows an external power source. I soldered a wire to the copper behind the voltage regulator on the switch pcb. I had to scrape off a bit of coating - seemed easiert than ruining the voltage regulator at the time (my soldering iron is really cheap). Connect the 5V wire to the 5V pin of the ESP32 devkit board.
 
