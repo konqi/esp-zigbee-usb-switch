@@ -17,7 +17,7 @@ I used this device because it is spacious enough on the inside to fit all the ad
 
 <img alt="casing" src="assets/casing.jpg" height=300 />
 
-Everything fits into the original case. I cliped off everything on the back and put isolating tape wherever physical contact is possible. The two LED sockets and the condensator hold the board in place quite nicely.
+Everything fits into the original case. I clipped off everything on the back and put isolating tape wherever physical contact is possible. The two LED sockets and the condensator hold the board in place quite nicely.
 
 ## Logic wires
 
@@ -68,6 +68,9 @@ Simply copy the [z2m converter file](./z2m_converter/usb-switch.js) into you dat
 external_converters:
   - usb-switch.js
 ```
+
+When this is ever used by more than just one person, I might create a pull-request in the z2m repo for general support.
+Doesn't make much sense to do so if it's just me.
 
 # Resetting the zigbee connection
 
