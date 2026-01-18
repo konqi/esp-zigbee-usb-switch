@@ -62,12 +62,7 @@ edf.py -P <PORT> flash
 # Integration
 
 If you're using zigbee2mqtt, you can use the converter I created.
-Simply copy the [z2m converter file](./z2m_converter/usb-switch.js) into you data folder of your z2m installation and add the following in your configuration.yaml:
-
-```yaml
-external_converters:
-  - usb-switch.js
-```
+Put the [z2m converter file](./z2m_converter/usb-switch.mjs) in your `zigbee2mqtt/data/external_converters` folder.
 
 When this is ever used by more than just one person, I might create a pull-request in the z2m repo for general support.
 Doesn't make much sense to do so if it's just me.
