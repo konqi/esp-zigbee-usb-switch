@@ -1,12 +1,11 @@
-const {
+// put this file in your zigbee2mqtt/data/external_converters folder (create folder if it doesn't exist)
+import {
   identify,
   onOff,
-} = require("zigbee-herdsman-converters/lib/modernExtend");
-const exposes = require("zigbee-herdsman-converters/lib/exposes");
-const reporting = require("zigbee-herdsman-converters/lib/reporting");
-const utils = require("zigbee-herdsman-converters/lib/utils");
-const e = exposes.presets;
-const ea = exposes.access;
+} from "zigbee-herdsman-converters/lib/modernExtend";
+import { presets as e, access as ea } from "zigbee-herdsman-converters/lib/exposes";
+import reporting from "zigbee-herdsman-converters/lib/reporting";
+import utils from "zigbee-herdsman-converters/lib/utils";
 
 const channelValues = ["ch_1", "ch_2"];
 
@@ -45,7 +44,7 @@ const bind = async (endpoint, target, clusters) => {
   }
 };
 
-const definition = {
+export default {
   zigbeeModel: ["zigbee-usb-switch"],
   model: "zigbee-usb-switch",
   vendor: "KONQI",
@@ -67,5 +66,3 @@ const definition = {
   },
   meta: {},
 };
-
-module.exports = definition;
