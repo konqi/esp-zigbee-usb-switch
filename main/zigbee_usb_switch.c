@@ -333,6 +333,69 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
                  msg->info.cluster,
                  msg->info.status);
         break;
+    case ESP_ZB_CORE_SCENES_STORE_SCENE_CB_ID:
+    {
+        const esp_zb_zcl_store_scene_message_t *scene = (const esp_zb_zcl_store_scene_message_t *)message;
+        if (scene->info.status != ESP_ZB_ZCL_STATUS_SUCCESS)
+        {
+            ESP_LOGW(TAG, "Scenes store callback status not successful (0x%02x)", scene->info.status);
+            break;
+        }
+
+        uint16_t scene_state = (uint16_t)usb_switch_state;
+        uint8_t ext_value[sizeof(uint16_t)] = {
+            (uint8_t)(scene_state & 0xFF),
+            (uint8_t)((scene_state >> 8) & 0xFF),
+        };
+        esp_zb_zcl_scenes_extension_field_t ext_field = {
+            .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE,
+            .length = sizeof(uint16_t),
+            .extension_field_attribute_value_list = ext_value,
+            .next = NULL,
+        };
+
+        esp_err_t scene_ret = esp_zb_zcl_scenes_table_store(HA_ESP_LIGHT_ENDPOINT,
+                                                             scene->group_id,
+                                                             scene->scene_id,
+                                                             0,
+                                                             &ext_field);
+        ESP_LOGI(TAG, "Stored scene %u/%u with multi-value=%u (%s)",
+                 scene->group_id,
+                 scene->scene_id,
+                 scene_state,
+                 scene_ret == ESP_OK ? "ok" : esp_err_to_name(scene_ret));
+        break;
+    }
+    case ESP_ZB_CORE_SCENES_RECALL_SCENE_CB_ID:
+    {
+        const esp_zb_zcl_recall_scene_message_t *scene = (const esp_zb_zcl_recall_scene_message_t *)message;
+        if (scene->info.status != ESP_ZB_ZCL_STATUS_SUCCESS)
+        {
+            ESP_LOGW(TAG, "Scenes recall callback status not successful (0x%02x)", scene->info.status);
+            break;
+        }
+
+        const esp_zb_zcl_scenes_extension_field_t *field = scene->field_set;
+        while (field)
+        {
+            if (field->cluster_id == ESP_ZB_ZCL_CLUSTER_ID_MULTI_VALUE &&
+                field->extension_field_attribute_value_list &&
+                field->length >= sizeof(uint16_t))
+            {
+                uint16_t desired_state = (uint16_t)field->extension_field_attribute_value_list[0] |
+                                         ((uint16_t)field->extension_field_attribute_value_list[1] << 8);
+                ESP_LOGI(TAG, "Recall scene %u/%u contains multi-value=%u", scene->group_id, scene->scene_id, desired_state);
+                if ((usb_switch_state_t)desired_state != usb_switch_state)
+                {
+                    ESP_LOGI(TAG, "Applying recalled multi-value state by toggling switch");
+                    toggle_gpio(GPIO_OUTPUT_IO_TOGGLE_SWITCH, 200);
+                }
+                break;
+            }
+            field = field->next;
+        }
+        break;
+    }
     default:
         ESP_LOGW(TAG, "Receive Zigbee action(0x%02x) callback", callback_id);
         break;
