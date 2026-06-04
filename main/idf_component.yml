@@ -1,8 +1,8 @@
 ## IDF Component Manager Manifest File
 dependencies:
-  espressif/led_strip: "^3.0.0"
-  espressif/esp-zigbee-lib: "^1.6.0"
-  espressif/esp-zboss-lib: "^1.6.0"
+  espressif/led_strip: "^3.0.3"
+  espressif/esp-zigbee-lib: "^1.6.8"
+  espressif/esp-zboss-lib: "^1.6.4"
   ## Required IDF version
   idf:
     version: ">=4.1.0"

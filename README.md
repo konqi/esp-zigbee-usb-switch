@@ -48,15 +48,15 @@ I soldered ground to the base of one of the USB-Ports, but there are many option
 
 # Building and Flashing
 
-Follow the instructions provided by Espressif [see](https://github.com/espressif/esp-zigbee-sdk/tree/main/examples/esp_zigbee_HA_sample/HA_on_off_light). Personally, I use the ESP-IDF extension in VSCode. Connect a USB-C cable to the USB-port for programming and monitoring.
+Follow the instructions provided by Espressif [see](https://github.com/espressif/esp-zigbee-sdk/tree/main/examples/home_automation_devices/on_off_light). Personally, I use the ESP-IDF extension in VSCode. Connect a USB-C cable to the USB-port for programming and monitoring.
 
 Using the cli tools the commands to build and flash should be:
 
 ```sh
-edf.py set-target esp32c6
-edf.py reconfigure
-edf.py build
-edf.py -P <PORT> flash
+idf.py set-target esp32c6
+idf.py reconfigure
+idf.py build
+idf.py -P <PORT> flash
 ```
 
 # Integration

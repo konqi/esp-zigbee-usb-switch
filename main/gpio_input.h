@@ -34,7 +34,7 @@ extern "C"
         uint32_t debounce_timeout;
     } gpio_input_debounce_config_t;
 
-    esp_err_t gpio_debounce_input_init(int gpio_debounce_inputs[], int number_of_inputs, debounced_input_callback cb);
+    esp_err_t gpio_debounce_input_init(const int gpio_debounce_inputs[], int number_of_inputs, debounced_input_callback cb);
     void gpio_read_once();
 #ifdef __cplusplus
 } // extern "C"

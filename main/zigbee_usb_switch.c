@@ -129,6 +129,10 @@ static void debounced_input_handler(int gpio_num, gpio_input_state_t value)
 
 static esp_err_t deferred_driver_init(void)
 {
+    static bool is_inited = false;
+
+    ESP_RETURN_ON_FALSE(!is_inited, ESP_OK, TAG, "Deferred driver already initialized");
+
     light_driver_init(LIGHT_DEFAULT_OFF);
     // ESP_RETURN_ON_FALSE(switch_driver_init(button_func_pair, PAIR_SIZE(button_func_pair), zb_buttons_handler), ESP_FAIL, TAG,
     //                     "Failed to initialize switch driver");
@@ -136,14 +140,18 @@ static esp_err_t deferred_driver_init(void)
     ESP_RETURN_ON_ERROR(gpio_debounce_input_init(gpio_inputs, INPUT_GPIO_LEN, debounced_input_handler), TAG, "Failed to initialize debounced inputs.");
     ESP_RETURN_ON_ERROR(toggle_driver_gpio_init(GPIO_OUTPUT_IO_TOGGLE_SWITCH), TAG,
                         "Failed to initialize toggle driver");
+    is_inited = true;
+
     return ESP_OK;
 }
 
-static esp_err_t bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
+static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
 {
-    ESP_RETURN_ON_ERROR(esp_zb_bdb_start_top_level_commissioning(mode_mask), TAG, "Failed to start Zigbee commissioning");
-
-    return ESP_OK;
+    esp_err_t err = esp_zb_bdb_start_top_level_commissioning(mode_mask);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to start Zigbee commissioning (status: %s)", esp_err_to_name(err));
+    }
 }
 
 static void schedule_steering_retry(const char *reason)
@@ -240,6 +248,28 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             schedule_steering_retry("network steering failed");
         }
         break;
+    case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE:
+    {
+        const esp_zb_zdo_signal_device_annce_params_t *dev_annce = (const esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
+        if (dev_annce)
+        {
+            ESP_LOGI(TAG, "New device commissioned or rejoined (short: 0x%04hx)", dev_annce->device_short_addr);
+        }
+        break;
+    }
+    case ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS:
+    {
+        const uint8_t *duration = (const uint8_t *)esp_zb_app_signal_get_params(p_sg_p);
+        if (duration && *duration)
+        {
+            ESP_LOGI(TAG, "Network(0x%04hx) is open for %d seconds", esp_zb_get_pan_id(), *duration);
+        }
+        else
+        {
+            ESP_LOGI(TAG, "Network(0x%04hx) closed, devices joining not allowed", esp_zb_get_pan_id());
+        }
+        break;
+    }
     default:
         ESP_LOGI(TAG, "ZDO signal: %s (0x%x), status: %s", esp_zb_zdo_signal_to_string(sig_type), sig_type,
                  esp_err_to_name(err_status));
@@ -369,6 +399,7 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_device_register(endpoint_list);
     esp_zb_core_action_handler_register(zb_action_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
+    esp_zb_set_secondary_network_channel_set(ESP_ZB_SECONDARY_CHANNEL_MASK);
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_stack_main_loop();
 }

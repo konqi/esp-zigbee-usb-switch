@@ -22,8 +22,10 @@ static void IRAM_ATTR gpio_interrupt_handler(void *arg)
 }
 
 static const uint16_t debounce_loop_delay_ticks = 50 / portTICK_PERIOD_MS;
-static void debounce_gpio_input_loop_task()
+static void debounce_gpio_input_loop_task(void *arg)
 {
+    // FreeRTOS task entry requires this parameter, even though this task does not use it.
+    (void)arg;
     for (;;)
     {
         for (int i = 0; i < gpio_count; ++i)
@@ -67,7 +69,7 @@ static void debounce_gpio_input_loop_task()
     }
 }
 
-static esp_err_t configure_gpio_inputs(int gpio_nums[])
+static esp_err_t configure_gpio_inputs(const int gpio_nums[])
 {
     gpio_config_t io_conf = {};
     uint64_t pin_bit_mask = 0;
@@ -104,7 +106,7 @@ static void clean_up()
     }
 }
 
-esp_err_t gpio_debounce_input_init(int gpio_debounce_inputs[], int number_of_inputs, debounced_input_callback cb)
+esp_err_t gpio_debounce_input_init(const int gpio_debounce_inputs[], int number_of_inputs, debounced_input_callback cb)
 {
     clean_up();
 
