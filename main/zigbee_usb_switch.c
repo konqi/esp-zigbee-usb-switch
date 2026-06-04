@@ -18,6 +18,13 @@
 
 static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
 
+#define ZB_INVALID_SHORT_ADDR                0xFFFF
+#define ZB_STEERING_RETRY_BASE_DELAY_MS      2000
+#define ZB_STEERING_RETRY_MAX_DELAY_MS       60000
+#define ZB_STEERING_RETRY_MAX_BACKOFF_STEPS  5
+
+static uint8_t s_steering_retry_attempt = 0;
+
 // Note: On my board GPIO_NUM_21 is soldered as input to the external button.
 // That experiment didn't work out but I'm too lazy to desolder the IC...
 // You don't need to configure GPIO_NUM_21 if it is not connected.
@@ -139,6 +146,34 @@ static esp_err_t bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
     return ESP_OK;
 }
 
+static void schedule_steering_retry(const char *reason)
+{
+    uint32_t backoff_step = s_steering_retry_attempt;
+    if (backoff_step > ZB_STEERING_RETRY_MAX_BACKOFF_STEPS)
+    {
+        backoff_step = ZB_STEERING_RETRY_MAX_BACKOFF_STEPS;
+    }
+
+    uint32_t delay_ms = ZB_STEERING_RETRY_BASE_DELAY_MS << backoff_step;
+    if (delay_ms > ZB_STEERING_RETRY_MAX_DELAY_MS)
+    {
+        delay_ms = ZB_STEERING_RETRY_MAX_DELAY_MS;
+    }
+
+    ESP_LOGW(TAG, "Scheduling steering retry #%u in %lu ms (%s)",
+             (unsigned int)(s_steering_retry_attempt + 1), (unsigned long)delay_ms,
+             reason ? reason : "no reason");
+
+    esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
+                           ESP_ZB_BDB_MODE_NETWORK_STEERING,
+                           delay_ms);
+
+    if (s_steering_retry_attempt < 255)
+    {
+        s_steering_retry_attempt++;
+    }
+}
+
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 {
     uint32_t *p_sg_p = signal_struct->p_app_signal;
@@ -158,23 +193,37 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             ESP_LOGI(TAG, "Device started up in %s factory-reset mode", esp_zb_bdb_is_factory_new() ? "" : "non");
             if (esp_zb_bdb_is_factory_new())
             {
+                s_steering_retry_attempt = 0;
                 ESP_LOGI(TAG, "Start network steering");
                 esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
             }
             else
             {
-                ESP_LOGI(TAG, "Device rebooted");
+                uint16_t short_addr = esp_zb_get_short_address();
+                if (short_addr == ZB_INVALID_SHORT_ADDR)
+                {
+                    ESP_LOGW(TAG, "Device rebooted but is not joined yet, starting recovery steering");
+                    schedule_steering_retry("reboot without network");
+                }
+                else
+                {
+                    s_steering_retry_attempt = 0;
+                    ESP_LOGI(TAG, "Device rebooted and restored network (PAN ID: 0x%04hx, Channel:%d, Short Address: 0x%04hx)",
+                             esp_zb_get_pan_id(), esp_zb_get_current_channel(), short_addr);
+                }
             }
         }
         else
         {
             /* commissioning failed */
             ESP_LOGW(TAG, "Failed to initialize Zigbee stack (status: %s)", esp_err_to_name(err_status));
+            schedule_steering_retry("stack initialization failed");
         }
         break;
     case ESP_ZB_BDB_SIGNAL_STEERING:
         if (err_status == ESP_OK)
         {
+            s_steering_retry_attempt = 0;
             esp_zb_ieee_addr_t extended_pan_id;
             esp_zb_get_extended_pan_id(extended_pan_id);
             ESP_LOGI(TAG, "Joined network successfully (Extended PAN ID: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x, PAN ID: 0x%04hx, Channel:%d, Short Address: 0x%04hx)",
@@ -188,7 +237,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         else
         {
             ESP_LOGI(TAG, "Network steering was not successful (status: %s)", esp_err_to_name(err_status));
-            esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb, ESP_ZB_BDB_MODE_NETWORK_STEERING, 1000);
+            schedule_steering_retry("network steering failed");
         }
         break;
     default:
