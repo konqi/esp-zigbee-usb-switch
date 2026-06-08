@@ -85,16 +85,6 @@ jobs:
           echo "filesize=$(wc -c < "${OTA}" | tr -d ' ')"        >> "${GITHUB_OUTPUT}"
 
       # ---------------------------------------------------------------------------
-      # Create a GitHub Release and attach the .ota file.
-      # Old releases (and their assets) are kept indefinitely.
-      # ---------------------------------------------------------------------------
-      - name: Create GitHub release and upload OTA
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ steps.ver.outputs.ota_filename }}
-          generate_release_notes: true
-
-      # ---------------------------------------------------------------------------
       # Prepend the new entry to z2m_converter/ota-index.json so zigbee2mqtt
       # can discover the update via a custom OTA index URL.
       # ---------------------------------------------------------------------------
@@ -157,6 +147,40 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Start from latest main to avoid detached-tag/non-fast-forward issues.
+          git fetch origin main
+          git switch -C ota-index-update origin/main
+
           git add z2m_converter/ota-index.json
+          if git diff --cached --quiet; then
+            echo "ota-index.json unchanged, skipping commit"
+            exit 0
+          fi
+
           git commit -m "chore: update ota-index for ${{ github.ref_name }}"
-          git push origin HEAD:main
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Pushed ota-index update on attempt ${attempt}"
+              exit 0
+            fi
+
+            echo "Push rejected (attempt ${attempt}), rebasing onto latest origin/main"
+            git fetch origin main
+            git rebase origin/main
+          done
+
+          echo "Failed to push ota-index.json update after retries"
+          exit 1
+
+      # ---------------------------------------------------------------------------
+      # Create a GitHub Release and attach the .ota file.
+      # Run this only after ota-index is committed so we don't publish a stale
+      # release when the index update fails.
+      # ---------------------------------------------------------------------------
+      - name: Create GitHub release and upload OTA
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.ver.outputs.ota_filename }}
+          generate_release_notes: true
