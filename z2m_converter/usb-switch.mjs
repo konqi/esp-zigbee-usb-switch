@@ -49,6 +49,7 @@ export default {
   model: "zigbee-usb-switch",
   vendor: "KONQI",
   description: "konqi's homebrew usb-switch extension",
+  ota: true,
   fromZigbee: [switchLocalInput],
   toZigbee: [switchLocalOutput],
   exposes: [e.enum("channel", ea.ALL, channelValues)],

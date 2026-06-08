@@ -9,6 +9,12 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
+# Bootloader config
+#
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# end of Bootloader config
+
+#
 # mbedTLS
 #
 CONFIG_MBEDTLS_HARDWARE_AES=n

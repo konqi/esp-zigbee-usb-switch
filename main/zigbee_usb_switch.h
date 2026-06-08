@@ -29,6 +29,21 @@
 #define ESP_MODEL_IDENTIFIER "\x11" \
                              "zigbee-usb-switch" /* Customized model identifier */
 
+/* Zigbee OTA client settings */
+#ifndef ESP_OTA_MANUFACTURER_CODE
+#define ESP_OTA_MANUFACTURER_CODE 0x131B
+#endif
+
+#ifndef ESP_OTA_IMAGE_TYPE
+#define ESP_OTA_IMAGE_TYPE 0x0001
+#endif
+
+#ifndef ESP_OTA_FILE_VERSION
+#define ESP_OTA_FILE_VERSION 0x00010000
+#endif
+
+#define ESP_OTA_QUERY_INTERVAL_MIN 360
+
 #define ESP_ZB_ZED_CONFIG()                               \
     {                                                     \
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_ED,             \
