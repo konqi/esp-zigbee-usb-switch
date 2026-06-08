@@ -102,6 +102,32 @@ Put the [z2m converter file](./z2m_converter/usb-switch.mjs) in your `zigbee2mqt
 When this is ever used by more than just one person, I might create a pull-request in the z2m repo for general support.
 Doesn't make much sense to do so if it's just me.
 
+## Zigbee OTA updates via zigbee2mqtt
+
+The converter already has `ota: true`. To let zigbee2mqtt find the OTA image, point it at the index file that is updated automatically by the GitHub release workflow.
+
+Add the following to your `zigbee2mqtt/data/configuration.yaml`:
+
+```yaml
+ota:
+  zigbee_ota_override_index_location: https://raw.githubusercontent.com/konqi/esp-zigbee-usb-switch/main/z2m_converter/ota-index.json
+```
+
+Restart zigbee2mqtt. The device will now appear in the **OTA** tab of the zigbee2mqtt frontend. Click **Check for updates** – if a newer firmware is available it will show up, and you can trigger the update from there.
+
+### How releases work
+
+Push a semver tag (e.g. `v1.2.3`) to GitHub. The release workflow will:
+
+1. Build the firmware with OTA version bytes derived from the tag:
+   - `APP_RELEASE = 1`, `APP_BUILD = 2`, `STACK_RELEASE = 3`
+   - `file_version = (1 << 24) | (2 << 16) | (3 << 8) | 0`
+2. Wrap the `.bin` in a Zigbee OTA image (`.ota`).
+3. Create a GitHub Release and attach the `.ota` file (old releases are kept).
+4. Prepend the new entry to [`z2m_converter/ota-index.json`](./z2m_converter/ota-index.json) and commit it back to `main`.
+
+The raw URL of the index file is stable, so zigbee2mqtt will always fetch the latest list on its next OTA poll.
+
 # Resetting the zigbee connection
 
 Press the toggle button 10 times in short succession.

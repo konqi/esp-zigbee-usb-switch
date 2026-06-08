@@ -1,0 +1,151 @@
+name: Release OTA Firmware
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------------------------------------------------------------------------
+      # Parse version bytes from the tag (e.g. v1.2.3 → release=1 build=2 stack=3)
+      # File version = (release << 24) | (build << 16) | (stack << 8) | 0
+      # ---------------------------------------------------------------------------
+      - name: Parse version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          IFS='.' read -r APP_RELEASE APP_BUILD STACK_RELEASE <<< "$VER"
+          FILE_VERSION=$(( (APP_RELEASE << 24) | (APP_BUILD << 16) | (STACK_RELEASE << 8) ))
+          FILE_VERSION_HEX=$(printf '%08X' "${FILE_VERSION}")
+          OTA_FILENAME="zigbee-usb-switch-${TAG}.ota"
+          echo "app_release=${APP_RELEASE}"       >> "${GITHUB_OUTPUT}"
+          echo "app_build=${APP_BUILD}"           >> "${GITHUB_OUTPUT}"
+          echo "stack_release=${STACK_RELEASE}"   >> "${GITHUB_OUTPUT}"
+          echo "file_version=${FILE_VERSION}"     >> "${GITHUB_OUTPUT}"
+          echo "file_version_hex=${FILE_VERSION_HEX}" >> "${GITHUB_OUTPUT}"
+          echo "ota_filename=${OTA_FILENAME}"     >> "${GITHUB_OUTPUT}"
+          echo "Parsed tag=${TAG}: release=${APP_RELEASE} build=${APP_BUILD} stack=${STACK_RELEASE} → fileversion=0x${FILE_VERSION_HEX} (${FILE_VERSION})"
+
+      # ---------------------------------------------------------------------------
+      # Build the firmware with explicit OTA version bytes so the binary carries
+      # the same version that will appear in the OTA image header.
+      # ---------------------------------------------------------------------------
+      - name: Build firmware
+        uses: espressif/esp-idf-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32c6
+          command: >-
+            idf.py
+            -D ESP_OTA_APP_RELEASE=${{ steps.ver.outputs.app_release }}
+            -D ESP_OTA_APP_BUILD=${{ steps.ver.outputs.app_build }}
+            -D ESP_OTA_STACK_RELEASE=${{ steps.ver.outputs.stack_release }}
+            -D ESP_OTA_STACK_BUILD=0
+            build
+
+      # ---------------------------------------------------------------------------
+      # Wrap the .bin in a standard Zigbee OTA file using Espressif's tool.
+      # Tag 0x0000 = "Upgrade Image" sub-element.
+      # ---------------------------------------------------------------------------
+      - name: Download OTA image builder
+        run: |
+          curl -fsSL \
+            "https://raw.githubusercontent.com/espressif/esp-zigbee-sdk/main/tools/image_builder_tool/image_builder_tool.py" \
+            -o image_builder_tool.py
+
+      - name: Create OTA image
+        run: |
+          python3 image_builder_tool.py \
+            --manuf-id   0x131B \
+            --image-type 0x0001 \
+            --file-version ${{ steps.ver.outputs.file_version }} \
+            --tag 0x0000 build/zigbee-switcher.bin
+          GENERATED="131B-0001-${{ steps.ver.outputs.file_version_hex }}-ota-file.zigbee"
+          mv "${GENERATED}" "${{ steps.ver.outputs.ota_filename }}"
+          echo "Created OTA image: ${{ steps.ver.outputs.ota_filename }}"
+
+      - name: Compute checksum and file size
+        id: meta
+        run: |
+          OTA="${{ steps.ver.outputs.ota_filename }}"
+          echo "sha512=$(sha512sum "${OTA}" | awk '{print $1}')"  >> "${GITHUB_OUTPUT}"
+          echo "filesize=$(wc -c < "${OTA}" | tr -d ' ')"        >> "${GITHUB_OUTPUT}"
+
+      # ---------------------------------------------------------------------------
+      # Create a GitHub Release and attach the .ota file.
+      # Old releases (and their assets) are kept indefinitely.
+      # ---------------------------------------------------------------------------
+      - name: Create GitHub release and upload OTA
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.ver.outputs.ota_filename }}
+          generate_release_notes: true
+
+      # ---------------------------------------------------------------------------
+      # Prepend the new entry to z2m_converter/ota-index.json so zigbee2mqtt
+      # can discover the update via a custom OTA index URL.
+      # ---------------------------------------------------------------------------
+      - name: Update ota-index.json
+        env:
+          OTA_FILENAME: ${{ steps.ver.outputs.ota_filename }}
+          FILE_VERSION: ${{ steps.ver.outputs.file_version }}
+          FILE_SIZE: ${{ steps.meta.outputs.filesize }}
+          SHA512: ${{ steps.meta.outputs.sha512 }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          repo       = os.environ["GITHUB_REPOSITORY"]
+          tag        = os.environ["GITHUB_REF_NAME"]
+          ota_fn     = os.environ["OTA_FILENAME"]
+          file_ver   = int(os.environ["FILE_VERSION"])
+          file_size  = int(os.environ["FILE_SIZE"])
+          sha512     = os.environ["SHA512"]
+
+          url = f"https://github.com/{repo}/releases/download/{tag}/{ota_fn}"
+
+          new_entry = {
+              "fileVersion":      file_ver,
+              "fileSize":         file_size,
+              "url":              url,
+              "imageType":        1,
+              "manufacturerCode": 4891,
+              "modelId":          "zigbee-usb-switch",
+              "manufacturerName": "KONQI",
+              "sha512":           sha512,
+          }
+
+          index_path = "z2m_converter/ota-index.json"
+          with open(index_path, "r") as f:
+              entries = json.load(f)
+
+          # Keep latest version first
+          entries.insert(0, new_entry)
+
+          with open(index_path, "w") as f:
+              json.dump(entries, f, indent=2)
+              f.write("\n")
+
+          print(f"Updated {index_path}: added version {file_ver:#010x} ({url})")
+          PYEOF
+
+      - name: Commit updated ota-index.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add z2m_converter/ota-index.json
+          git commit -m "chore: update ota-index for ${{ github.ref_name }}"
+          git push origin HEAD:main
