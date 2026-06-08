@@ -19,25 +19,41 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------------------------------------------------
-      # Parse version bytes from the tag (e.g. v1.2.3 → release=1 build=2 stack=3)
-      # File version = (release << 24) | (build << 16) | (stack << 8) | 0
+      # Parse semver from the tag (vM.m.p) and pack into Zigbee OTA fileVersion.
+      # app version word: major(4 bits), minor(4 bits), build/patch(8 bits)
+      # stack version word remains 0 for now.
+      # fileVersion = ((app_release << 24) | (app_build << 16))
       # ---------------------------------------------------------------------------
       - name: Parse version from tag
         id: ver
         run: |
           TAG="${GITHUB_REF_NAME}"
           VER="${TAG#v}"
-          IFS='.' read -r APP_RELEASE APP_BUILD STACK_RELEASE <<< "$VER"
-          FILE_VERSION=$(( (APP_RELEASE << 24) | (APP_BUILD << 16) | (STACK_RELEASE << 8) ))
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VER"
+
+          if [ "${MAJOR}" -gt 15 ] || [ "${MINOR}" -gt 15 ] || [ "${PATCH}" -gt 255 ]; then
+            echo "Semver out of Zigbee OTA range: major/minor must be <=15 and patch <=255"
+            exit 1
+          fi
+
+          APP_RELEASE=$(( (MAJOR << 4) | MINOR ))
+          APP_BUILD=${PATCH}
+          STACK_RELEASE=0
+          STACK_BUILD=0
+          FILE_VERSION=$(( (APP_RELEASE << 24) | (APP_BUILD << 16) | (STACK_RELEASE << 8) | STACK_BUILD ))
           FILE_VERSION_HEX=$(printf '%08X' "${FILE_VERSION}")
           OTA_FILENAME="zigbee-usb-switch-${TAG}.ota"
+          echo "major=${MAJOR}"                 >> "${GITHUB_OUTPUT}"
+          echo "minor=${MINOR}"                 >> "${GITHUB_OUTPUT}"
+          echo "patch=${PATCH}"                 >> "${GITHUB_OUTPUT}"
           echo "app_release=${APP_RELEASE}"       >> "${GITHUB_OUTPUT}"
           echo "app_build=${APP_BUILD}"           >> "${GITHUB_OUTPUT}"
           echo "stack_release=${STACK_RELEASE}"   >> "${GITHUB_OUTPUT}"
+          echo "stack_build=${STACK_BUILD}"       >> "${GITHUB_OUTPUT}"
           echo "file_version=${FILE_VERSION}"     >> "${GITHUB_OUTPUT}"
           echo "file_version_hex=${FILE_VERSION_HEX}" >> "${GITHUB_OUTPUT}"
           echo "ota_filename=${OTA_FILENAME}"     >> "${GITHUB_OUTPUT}"
-          echo "Parsed tag=${TAG}: release=${APP_RELEASE} build=${APP_BUILD} stack=${STACK_RELEASE} → fileversion=0x${FILE_VERSION_HEX} (${FILE_VERSION})"
+          echo "Parsed tag=${TAG}: semver=${MAJOR}.${MINOR}.${PATCH} packed app_release=${APP_RELEASE} app_build=${APP_BUILD} → fileversion=0x${FILE_VERSION_HEX} (${FILE_VERSION})"
 
       # ---------------------------------------------------------------------------
       # Build the firmware with explicit OTA version bytes so the binary carries
@@ -53,7 +69,7 @@ jobs:
             -D ESP_OTA_APP_RELEASE=${{ steps.ver.outputs.app_release }}
             -D ESP_OTA_APP_BUILD=${{ steps.ver.outputs.app_build }}
             -D ESP_OTA_STACK_RELEASE=${{ steps.ver.outputs.stack_release }}
-            -D ESP_OTA_STACK_BUILD=0
+            -D ESP_OTA_STACK_BUILD=${{ steps.ver.outputs.stack_build }}
             build
 
       # ---------------------------------------------------------------------------
