@@ -60,16 +60,12 @@ jobs:
           index_path = "z2m_converter/ota-index.json"
 
           def decode_from_new_packed(file_version):
+              # Packed format: APP_RELEASE=(major<<4|minor) byte3, APP_BUILD=patch byte2,
+              # STACK_RELEASE byte1, STACK_BUILD byte0.
               app_word = (file_version >> 16) & 0xFFFF
               major = (app_word >> 12) & 0x0F
               minor = (app_word >> 8) & 0x0F
               patch = app_word & 0xFF
-              return (major, minor, patch)
-
-          def decode_from_legacy_bytes(file_version):
-              major = (file_version >> 24) & 0xFF
-              minor = (file_version >> 16) & 0xFF
-              patch = (file_version >> 8) & 0xFF
               return (major, minor, patch)
 
           if os.path.exists(index_path):
@@ -78,9 +74,8 @@ jobs:
               decoded_candidates = []
               for entry in entries:
                   try:
-                    file_version = int(entry["fileVersion"])
-                    decoded_candidates.append(decode_from_new_packed(file_version))
-                    decoded_candidates.append(decode_from_legacy_bytes(file_version))
+                      file_version = int(entry["fileVersion"])
+                      decoded_candidates.append(decode_from_new_packed(file_version))
                   except (KeyError, TypeError, ValueError):
                       pass
               if decoded_candidates:
