@@ -556,7 +556,7 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_zcl_ota_upgrade_client_variable_t ota_client_data = {
         .timer_query = ESP_ZB_ZCL_OTA_UPGRADE_QUERY_TIMER_COUNT_DEF,
         .hw_version = 0,
-        .max_data_size = 64,
+        .max_data_size = 128,
     };
     uint8_t ota_server_endpoint = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ENDPOINT_DEF_VALUE;
     uint16_t ota_server_addr = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ADDR_DEF_VALUE;

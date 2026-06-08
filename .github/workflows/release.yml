@@ -112,6 +112,8 @@ jobs:
             -D ESP_OTA_STACK_RELEASE=${{ steps.ver.outputs.stack_release }}
             -D ESP_OTA_STACK_BUILD=${{ steps.ver.outputs.stack_build }}
             build
+        env:
+          PROJECT_VER: ${{ steps.rel.outputs.release_tag }}
 
       # ---------------------------------------------------------------------------
       # Wrap the .bin in a standard Zigbee OTA file using Espressif's tool.

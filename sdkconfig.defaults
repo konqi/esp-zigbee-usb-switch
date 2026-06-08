@@ -28,6 +28,12 @@ CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
 CONFIG_MBEDTLS_ECJPAKE_C=y
 # end of mbedTLS
 
+# Disable Wi-Fi; keep LWIP/TLS enabled because required components depend on them.
+# Keep logging level unchanged for debugging.
+# CONFIG_ESP_WIFI_ENABLED is not set
+CONFIG_LWIP_ENABLE=y
+CONFIG_ESP_TLS_USING_MBEDTLS=y
+
 #
 # Zboss
 #
