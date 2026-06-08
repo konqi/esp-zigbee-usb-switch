@@ -21,12 +21,56 @@
 
 static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
 
-#define ZB_INVALID_SHORT_ADDR                0xFFFF
-#define ZB_STEERING_RETRY_BASE_DELAY_MS      2000
-#define ZB_STEERING_RETRY_MAX_DELAY_MS       60000
-#define ZB_STEERING_RETRY_MAX_BACKOFF_STEPS  5
+#define ZB_INVALID_SHORT_ADDR 0xFFFF
+#define ZB_STEERING_RETRY_BASE_DELAY_MS 2000
+#define ZB_STEERING_RETRY_MAX_DELAY_MS 60000
+#define ZB_STEERING_RETRY_MAX_BACKOFF_STEPS 5
 
 static uint8_t s_steering_retry_attempt = 0;
+
+static void fill_zcl_string(uint8_t *zb_str, size_t zb_str_size, const char *text)
+{
+    if (!zb_str || !text || zb_str_size < 2)
+    {
+        return;
+    }
+
+    size_t max_payload = zb_str_size - 1;
+    size_t text_len = strlen(text);
+    if (text_len > max_payload)
+    {
+        text_len = max_payload;
+    }
+
+    zb_str[0] = (uint8_t)text_len;
+    memcpy(&zb_str[1], text, text_len);
+}
+
+static void build_basic_cluster_version_strings(uint32_t file_version, uint8_t *sw_build_id, size_t sw_build_id_size,
+                                                uint8_t *date_code, size_t date_code_size)
+{
+    uint8_t app_release = (file_version >> 24) & 0xFF;
+    uint8_t app_build = (file_version >> 16) & 0xFF;
+    uint8_t stack_release = (file_version >> 8) & 0xFF;
+    uint8_t stack_build = file_version & 0xFF;
+
+    char sw_build_id_text[32] = {0};
+    char date_code_text[16] = {0};
+
+    (void)snprintf(sw_build_id_text, sizeof(sw_build_id_text), "%u.%u.%u.%u",
+                   (unsigned int)app_release,
+                   (unsigned int)app_build,
+                   (unsigned int)stack_release,
+                   (unsigned int)stack_build);
+
+    (void)snprintf(date_code_text, sizeof(date_code_text), "%04u%02u%02u",
+                   2000U + (unsigned int)app_release,
+                   (unsigned int)((app_build % 12U) + 1U),
+                   (unsigned int)((stack_release % 28U) + 1U));
+
+    fill_zcl_string(sw_build_id, sw_build_id_size, sw_build_id_text);
+    fill_zcl_string(date_code, date_code_size, date_code_text);
+}
 
 static const char *ota_status_to_str(esp_zb_zcl_ota_upgrade_status_t status)
 {
@@ -407,10 +451,10 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
         };
 
         esp_err_t scene_ret = esp_zb_zcl_scenes_table_store(HA_ESP_LIGHT_ENDPOINT,
-                                                             scene->group_id,
-                                                             scene->scene_id,
-                                                             0,
-                                                             &ext_field);
+                                                            scene->group_id,
+                                                            scene->scene_id,
+                                                            0,
+                                                            &ext_field);
         ESP_LOGI(TAG, "Stored scene %u/%u with multi-value=%u (%s)",
                  scene->group_id,
                  scene->scene_id,
@@ -517,14 +561,14 @@ static void esp_zb_task(void *pvParameters)
     uint8_t ota_server_endpoint = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ENDPOINT_DEF_VALUE;
     uint16_t ota_server_addr = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ADDR_DEF_VALUE;
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_cluster_add_attr(ota_cluster,
-                                                               ESP_ZB_ZCL_ATTR_OTA_UPGRADE_CLIENT_DATA_ID,
-                                                               &ota_client_data));
+                                                              ESP_ZB_ZCL_ATTR_OTA_UPGRADE_CLIENT_DATA_ID,
+                                                              &ota_client_data));
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_cluster_add_attr(ota_cluster,
-                                                               ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ENDPOINT_ID,
-                                                               &ota_server_endpoint));
+                                                              ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ENDPOINT_ID,
+                                                              &ota_server_endpoint));
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_cluster_add_attr(ota_cluster,
-                                                               ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ADDR_ID,
-                                                               &ota_server_addr));
+                                                              ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ADDR_ID,
+                                                              &ota_server_addr));
     esp_zb_attribute_list_t *attr = multistate_cluster;
     // enable reporting of present value (see https://github.com/espressif/esp-zigbee-sdk/issues/372#issuecomment-2213952627)
     ESP_LOGV(TAG, "0: attributeId(0x%02x) access(0x%02x)", multistate_cluster->attribute.id, multistate_cluster->attribute.access);
@@ -556,9 +600,15 @@ static void esp_zb_task(void *pvParameters)
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ep_list_add_ep(endpoint_list, cluster_list, ep_config));
 
     // add zcl basic cluster
+    uint8_t sw_build_id[33] = {0};
+    uint8_t date_code[17] = {0};
+    build_basic_cluster_version_strings(ESP_OTA_FILE_VERSION, sw_build_id, sizeof(sw_build_id), date_code, sizeof(date_code));
+
     zcl_basic_manufacturer_info_t info = {
         .manufacturer_name = ESP_MANUFACTURER_NAME,
         .model_identifier = ESP_MODEL_IDENTIFIER,
+        .date_code = date_code,
+        .sw_build_id = sw_build_id,
     };
     esp_zcl_utility_add_ep_basic_manufacturer_info(endpoint_list, HA_ESP_LIGHT_ENDPOINT, &info);
 

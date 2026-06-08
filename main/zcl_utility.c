@@ -16,6 +16,7 @@
 #include "string.h"
 #include "zcl_utility.h"
 #include <stdint.h>
+#include "zcl/esp_zigbee_zcl_basic.h"
 
 static const char *TAG = "ZCL_UTILITY";
 
@@ -33,6 +34,14 @@ esp_err_t esp_zcl_utility_add_ep_basic_manufacturer_info(esp_zb_ep_list_t *ep_li
     ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, info->manufacturer_name));
     ESP_RETURN_ON_FALSE((info && info->model_identifier), ESP_ERR_INVALID_ARG, TAG, "Invalid model identifier");
     ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, info->model_identifier));
+    if (info && info->date_code)
+    {
+        ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_DATE_CODE_ID, info->date_code));
+    }
+    if (info && info->sw_build_id)
+    {
+        ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_SW_BUILD_ID, info->sw_build_id));
+    }
     // esp_zb_basic_cluster_add_attr(basic_cluster,ESP_ZB_ZCL_ATTR_BASIC_POWER_SOURCE_ID, 0x04);
     return ret;
 }

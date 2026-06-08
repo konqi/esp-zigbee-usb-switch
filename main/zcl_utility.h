@@ -34,6 +34,8 @@ extern "C"
     {
         char *manufacturer_name;
         char *model_identifier;
+        uint8_t *date_code;
+        uint8_t *sw_build_id;
     } zcl_basic_manufacturer_info_t;
 
     /**
