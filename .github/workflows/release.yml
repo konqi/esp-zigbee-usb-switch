@@ -147,6 +147,26 @@ jobs:
       # Prepend the new entry to z2m_converter/ota-index.json so zigbee2mqtt
       # can discover the update via a custom OTA index URL.
       # ---------------------------------------------------------------------------
+      - name: Fetch release notes from GitHub release body
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.rel.outputs.release_tag }}
+        run: |
+          BODY=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            | python3 -c "import sys, json; print(json.load(sys.stdin).get('body', '') or '')")
+          # Store multi-line value safely using GITHUB_OUTPUT delimiter
+          {
+            echo "release_notes<<RELEASE_NOTES_EOF"
+            echo "$BODY"
+            echo "RELEASE_NOTES_EOF"
+          } >> "${GITHUB_OUTPUT}"
+          echo "Fetched release notes (${#BODY} chars)"
+
       - name: Update ota-index.json
         env:
           RELEASE_TAG: ${{ steps.rel.outputs.release_tag }}
@@ -154,16 +174,18 @@ jobs:
           FILE_VERSION: ${{ steps.ver.outputs.file_version }}
           FILE_SIZE: ${{ steps.meta.outputs.filesize }}
           SHA512: ${{ steps.meta.outputs.sha512 }}
+          RELEASE_NOTES: ${{ steps.notes.outputs.release_notes }}
         run: |
           python3 - <<'PYEOF'
           import json, os
 
-          repo       = os.environ["GITHUB_REPOSITORY"]
-          tag        = os.environ["RELEASE_TAG"]
-          ota_fn     = os.environ["OTA_FILENAME"]
-          file_ver   = int(os.environ["FILE_VERSION"])
-          file_size  = int(os.environ["FILE_SIZE"])
-          sha512     = os.environ["SHA512"]
+          repo         = os.environ["GITHUB_REPOSITORY"]
+          tag          = os.environ["RELEASE_TAG"]
+          ota_fn       = os.environ["OTA_FILENAME"]
+          file_ver     = int(os.environ["FILE_VERSION"])
+          file_size    = int(os.environ["FILE_SIZE"])
+          sha512       = os.environ["SHA512"]
+          release_notes = os.environ.get("RELEASE_NOTES", "").strip()
 
           url = f"https://github.com/{repo}/releases/download/{tag}/{ota_fn}"
 
@@ -177,6 +199,8 @@ jobs:
               "manufacturerName": "KONQI",
               "sha512":           sha512,
           }
+          if release_notes:
+              new_entry["releaseNotes"] = release_notes
 
           index_path = "z2m_converter/ota-index.json"
           with open(index_path, "r") as f:
