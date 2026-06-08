@@ -19,7 +19,7 @@
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile light (End Device) source code.
 #endif
 
-static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
+static const char *TAG = "ESP_ZB_USB_SWITCH";
 
 #define ZB_INVALID_SHORT_ADDR 0xFFFF
 #define ZB_STEERING_RETRY_BASE_DELAY_MS 2000
