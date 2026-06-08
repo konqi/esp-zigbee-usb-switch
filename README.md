@@ -58,8 +58,41 @@ Using the cli tools the commands to build and flash should be:
 idf.py set-target esp32c6
 idf.py reconfigure
 idf.py build
-idf.py -P <PORT> flash
+idf.py -p <PORT> flash
 ```
+
+# Zigbee OTA firmware updates
+
+This firmware is now prepared for Zigbee OTA upgrades:
+
+- OTA client cluster is enabled on endpoint 10
+- partition layout includes `ota_0` and `ota_1` slots
+- bootloader rollback support is enabled (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`)
+
+When you want to update firmware over Zigbee in the future, you still need an OTA server in your Zigbee network (for example a coordinator/plugin that can host Zigbee OTA images).
+
+The OTA image metadata in firmware is currently:
+
+- manufacturer code: `0x131B`
+- image type: `0x0001`
+- file version: generated at build time from release/build bytes
+
+By default, the build wiring sets `file version` as:
+
+- app release byte: `1`
+- app build byte: `git rev-list --count HEAD` modulo 256
+- stack release byte: `0`
+- stack build byte: `0`
+
+which is packed as `(app_release << 24) | (app_build << 16) | (stack_release << 8) | stack_build`.
+
+For release builds, you can override values at configure time, for example:
+
+```sh
+idf.py -D ESP_OTA_APP_RELEASE=1 -D ESP_OTA_STACK_RELEASE=0 -D ESP_OTA_STACK_BUILD=0 build
+```
+
+Your OTA server image metadata must match those values and use a higher file version for updates.
 
 # Integration
 

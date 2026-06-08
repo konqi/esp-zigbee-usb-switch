@@ -11,6 +11,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ha/esp_zigbee_ha_standard.h"
+#include "esp_zigbee_attribute.h"
+#include "esp_zigbee_ota.h"
+#include "zcl/esp_zigbee_zcl_ota.h"
 
 #if !defined ZB_ED_ROLE
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile light (End Device) source code.
@@ -24,6 +27,52 @@ static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
 #define ZB_STEERING_RETRY_MAX_BACKOFF_STEPS  5
 
 static uint8_t s_steering_retry_attempt = 0;
+
+static const char *ota_status_to_str(esp_zb_zcl_ota_upgrade_status_t status)
+{
+    switch (status)
+    {
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_START:
+        return "start";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_APPLY:
+        return "apply";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_RECEIVE:
+        return "receive";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_FINISH:
+        return "finish";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ABORT:
+        return "abort";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_CHECK:
+        return "check";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_OK:
+        return "ok";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ERROR:
+        return "error";
+    case ESP_ZB_ZCL_OTA_UPGRADE_IMAGE_STATUS_NORMAL:
+        return "normal";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_BUSY:
+        return "busy";
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_SERVER_NOT_FOUND:
+        return "server_not_found";
+    default:
+        return "unknown";
+    }
+}
+
+static void configure_ota_query_interval(void)
+{
+    esp_zb_lock_acquire(portMAX_DELAY);
+    esp_err_t ota_ret = esp_zb_ota_upgrade_client_query_interval_set(HA_ESP_LIGHT_ENDPOINT, ESP_OTA_QUERY_INTERVAL_MIN);
+    esp_zb_lock_release();
+    if (ota_ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to set OTA query interval (status: %s)", esp_err_to_name(ota_ret));
+    }
+    else
+    {
+        ESP_LOGI(TAG, "OTA query interval set to %u minutes", (unsigned int)ESP_OTA_QUERY_INTERVAL_MIN);
+    }
+}
 
 // Note: On my board GPIO_NUM_21 is soldered as input to the external button.
 // That experiment didn't work out but I'm too lazy to desolder the IC...
@@ -218,6 +267,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                     s_steering_retry_attempt = 0;
                     ESP_LOGI(TAG, "Device rebooted and restored network (PAN ID: 0x%04hx, Channel:%d, Short Address: 0x%04hx)",
                              esp_zb_get_pan_id(), esp_zb_get_current_channel(), short_addr);
+                    configure_ota_query_interval();
                 }
             }
         }
@@ -238,6 +288,8 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                      extended_pan_id[7], extended_pan_id[6], extended_pan_id[5], extended_pan_id[4],
                      extended_pan_id[3], extended_pan_id[2], extended_pan_id[1], extended_pan_id[0],
                      esp_zb_get_pan_id(), esp_zb_get_current_channel(), esp_zb_get_short_address());
+
+            configure_ota_query_interval();
 
             // read values once after zigbee initialization
             gpio_read_once();
@@ -396,6 +448,29 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
         }
         break;
     }
+    case ESP_ZB_CORE_OTA_UPGRADE_VALUE_CB_ID:
+    {
+        const esp_zb_zcl_ota_upgrade_value_message_t *ota_msg = (const esp_zb_zcl_ota_upgrade_value_message_t *)message;
+        ESP_LOGI(TAG,
+                 "OTA status=%s (0x%04x), version=0x%08lx, image_type=0x%04x, payload_size=%u",
+                 ota_status_to_str(ota_msg->upgrade_status),
+                 ota_msg->upgrade_status,
+                 (unsigned long)ota_msg->ota_header.file_version,
+                 ota_msg->ota_header.image_type,
+                 (unsigned int)ota_msg->payload_size);
+        break;
+    }
+    case ESP_ZB_CORE_OTA_UPGRADE_QUERY_IMAGE_RESP_CB_ID:
+    {
+        const esp_zb_zcl_ota_upgrade_query_image_resp_message_t *ota_resp = (const esp_zb_zcl_ota_upgrade_query_image_resp_message_t *)message;
+        ESP_LOGI(TAG,
+                 "OTA query response status=0x%02x, version=0x%08lx, image_type=0x%04x, size=%lu",
+                 ota_resp->query_status,
+                 (unsigned long)ota_resp->file_version,
+                 ota_resp->image_type,
+                 (unsigned long)ota_resp->image_size);
+        break;
+    }
     default:
         ESP_LOGW(TAG, "Receive Zigbee action(0x%02x) callback", callback_id);
         break;
@@ -423,6 +498,33 @@ static void esp_zb_task(void *pvParameters)
         .status_flags = 0,
     };
     esp_zb_attribute_list_t *multistate_cluster = esp_zb_multistate_value_cluster_create(&multistate_config);
+    esp_zb_ota_cluster_cfg_t ota_cfg = {
+        .ota_upgrade_file_version = ESP_OTA_FILE_VERSION,
+        .ota_upgrade_manufacturer = ESP_OTA_MANUFACTURER_CODE,
+        .ota_upgrade_image_type = ESP_OTA_IMAGE_TYPE,
+        .ota_min_block_reque = ESP_ZB_OTA_UPGRADE_MIN_BLOCK_PERIOD_DEF_VALUE,
+        .ota_upgrade_file_offset = ESP_ZB_ZCL_OTA_UPGRADE_FILE_OFFSET_DEF_VALUE,
+        .ota_upgrade_downloaded_file_ver = ESP_ZB_ZCL_OTA_UPGRADE_DOWNLOADED_FILE_VERSION_DEF_VALUE,
+        .ota_upgrade_server_id = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_DEF_VALUE,
+        .ota_image_upgrade_status = ESP_ZB_ZCL_OTA_UPGRADE_IMAGE_STATUS_DEF_VALUE,
+    };
+    esp_zb_attribute_list_t *ota_cluster = esp_zb_ota_cluster_create(&ota_cfg);
+    esp_zb_zcl_ota_upgrade_client_variable_t ota_client_data = {
+        .timer_query = ESP_ZB_ZCL_OTA_UPGRADE_QUERY_TIMER_COUNT_DEF,
+        .hw_version = 0,
+        .max_data_size = 64,
+    };
+    uint8_t ota_server_endpoint = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ENDPOINT_DEF_VALUE;
+    uint16_t ota_server_addr = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ADDR_DEF_VALUE;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_cluster_add_attr(ota_cluster,
+                                                               ESP_ZB_ZCL_ATTR_OTA_UPGRADE_CLIENT_DATA_ID,
+                                                               &ota_client_data));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_cluster_add_attr(ota_cluster,
+                                                               ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ENDPOINT_ID,
+                                                               &ota_server_endpoint));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_cluster_add_attr(ota_cluster,
+                                                               ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ADDR_ID,
+                                                               &ota_server_addr));
     esp_zb_attribute_list_t *attr = multistate_cluster;
     // enable reporting of present value (see https://github.com/espressif/esp-zigbee-sdk/issues/372#issuecomment-2213952627)
     ESP_LOGV(TAG, "0: attributeId(0x%02x) access(0x%02x)", multistate_cluster->attribute.id, multistate_cluster->attribute.access);
@@ -442,6 +544,7 @@ static void esp_zb_task(void *pvParameters)
 
     // TODO: might be necessary to add the cluster to a different endpoint
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_cluster_list_add_multistate_value_cluster(cluster_list, multistate_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_cluster_list_add_ota_cluster(cluster_list, ota_cluster, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
 
     // add endpoint with clusters to list
     esp_zb_endpoint_config_t ep_config = {
