@@ -42,9 +42,9 @@ jobs:
 
       # ---------------------------------------------------------------------------
       # Parse semver from the tag (vM.m.p) and pack into Zigbee OTA fileVersion.
-      # app version word: major(4 bits), minor(4 bits), build/patch(8 bits)
-      # stack version word remains 0 for now.
-      # fileVersion = ((app_release << 24) | (app_build << 16))
+      # app word:   major(4 bits), minor(4 bits), build/patch(8 bits)
+      # stack word: derived from espressif/esp-zigbee-lib component version.
+      # fileVersion = ((app_release << 24) | (app_build << 16) | (stack_release << 8) | stack_build)
       # ---------------------------------------------------------------------------
       - name: Parse version from tag
         id: ver
@@ -60,8 +60,27 @@ jobs:
 
           APP_RELEASE=$(( (MAJOR << 4) | MINOR ))
           APP_BUILD=${PATCH}
-          STACK_RELEASE=0
-          STACK_BUILD=0
+
+          STACK_COMPAT_RAW=""
+          if [ -f "managed_components/espressif__esp-zigbee-lib/idf_component.yml" ]; then
+            STACK_COMPAT_RAW=$(grep -E '^version:' managed_components/espressif__esp-zigbee-lib/idf_component.yml | head -n1 | awk '{print $2}')
+          fi
+
+          STACK_COMPAT_RAW=$(echo "${STACK_COMPAT_RAW}" | tr -d "'\"")
+          if [[ ! "${STACK_COMPAT_RAW}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            STACK_COMPAT_RAW="0.0.0"
+          fi
+
+          IFS='.' read -r STACK_MAJOR STACK_MINOR STACK_PATCH <<< "${STACK_COMPAT_RAW}"
+          STACK_PATCH=${STACK_PATCH:-0}
+
+          if [ "${STACK_MAJOR}" -gt 15 ] || [ "${STACK_MINOR}" -gt 15 ] || [ "${STACK_PATCH}" -gt 255 ]; then
+            echo "Stack version out of Zigbee OTA range from esp-zigbee-lib (${STACK_COMPAT_RAW}): major/minor must be <=15 and patch <=255"
+            exit 1
+          fi
+
+          STACK_RELEASE=$(( (STACK_MAJOR << 4) | STACK_MINOR ))
+          STACK_BUILD=${STACK_PATCH}
           FILE_VERSION=$(( (APP_RELEASE << 24) | (APP_BUILD << 16) | (STACK_RELEASE << 8) | STACK_BUILD ))
           FILE_VERSION_HEX=$(printf '%08X' "${FILE_VERSION}")
           OTA_FILENAME="zigbee-usb-switch-${TAG}.ota"
@@ -75,7 +94,7 @@ jobs:
           echo "file_version=${FILE_VERSION}"     >> "${GITHUB_OUTPUT}"
           echo "file_version_hex=${FILE_VERSION_HEX}" >> "${GITHUB_OUTPUT}"
           echo "ota_filename=${OTA_FILENAME}"     >> "${GITHUB_OUTPUT}"
-          echo "Parsed tag=${TAG}: semver=${MAJOR}.${MINOR}.${PATCH} packed app_release=${APP_RELEASE} app_build=${APP_BUILD} → fileversion=0x${FILE_VERSION_HEX} (${FILE_VERSION})"
+          echo "Parsed tag=${TAG}: semver=${MAJOR}.${MINOR}.${PATCH}, zigbee_stack=${STACK_MAJOR}.${STACK_MINOR}.${STACK_PATCH} packed app_release=${APP_RELEASE} app_build=${APP_BUILD} stack_release=${STACK_RELEASE} stack_build=${STACK_BUILD} → fileversion=0x${FILE_VERSION_HEX} (${FILE_VERSION})"
 
       # ---------------------------------------------------------------------------
       # Build the firmware with explicit OTA version bytes so the binary carries
