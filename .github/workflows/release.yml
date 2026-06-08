@@ -61,9 +61,16 @@ jobs:
           APP_RELEASE=$(( (MAJOR << 4) | MINOR ))
           APP_BUILD=${PATCH}
 
+          # Read the actual resolved esp-zigbee-lib version from the managed_components
+          # manifest (present in CI after component install) with a fallback to the pinned
+          # minimum version declared in main/idf_component.yml (always tracked in git).
           STACK_COMPAT_RAW=""
           if [ -f "managed_components/espressif__esp-zigbee-lib/idf_component.yml" ]; then
             STACK_COMPAT_RAW=$(grep -E '^version:' managed_components/espressif__esp-zigbee-lib/idf_component.yml | head -n1 | awk '{print $2}')
+          fi
+          if [ -z "${STACK_COMPAT_RAW}" ] && [ -f "main/idf_component.yml" ]; then
+            # Extract the pinned minimum version (e.g. "^1.6.8" → "1.6.8")
+            STACK_COMPAT_RAW=$(grep -E 'esp-zigbee-lib' main/idf_component.yml | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
           fi
 
           STACK_COMPAT_RAW=$(echo "${STACK_COMPAT_RAW}" | tr -d "'\"")
