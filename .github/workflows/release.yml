@@ -132,8 +132,19 @@ jobs:
           with open(index_path, "r") as f:
               entries = json.load(f)
 
-          # Keep latest version first
-          entries.insert(0, new_entry)
+            # Keep latest version first and avoid duplicate entries for the same
+            # device/version tuple if the workflow is re-run for a tag.
+            entries = [
+              entry for entry in entries
+              if not (
+                entry.get("fileVersion") == new_entry["fileVersion"]
+                and entry.get("imageType") == new_entry["imageType"]
+                and entry.get("manufacturerCode") == new_entry["manufacturerCode"]
+                and entry.get("modelId") == new_entry["modelId"]
+                and entry.get("manufacturerName") == new_entry["manufacturerName"]
+              )
+            ]
+            entries.insert(0, new_entry)
 
           with open(index_path, "w") as f:
               json.dump(entries, f, indent=2)
