@@ -44,7 +44,7 @@ jobs:
       # the same version that will appear in the OTA image header.
       # ---------------------------------------------------------------------------
       - name: Build firmware
-        uses: espressif/esp-idf-action@v1
+        uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.0.1
           target: esp32c6
