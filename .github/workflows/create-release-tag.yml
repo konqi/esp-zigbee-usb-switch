@@ -1,0 +1,114 @@
+name: Create Release Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_part:
+        description: "Semver part to bump"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve next release tag
+        id: ver
+        env:
+          BUMP_PART: ${{ github.event.inputs.bump_part }}
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          import os
+          import re
+          import subprocess
+
+          bump_part = os.environ.get("BUMP_PART", "patch")
+          output_path = os.environ["GITHUB_OUTPUT"]
+
+          semver_re = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+
+          def parse_tag(tag):
+              m = semver_re.match(tag)
+              if not m:
+                  return None
+              return tuple(int(x) for x in m.groups())
+
+          all_tag_lines = subprocess.check_output(
+              ["git", "tag", "-l", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname"],
+              text=True,
+          ).splitlines()
+          semver_tags = [tag.strip() for tag in all_tag_lines if parse_tag(tag.strip())]
+          latest_tag_ver = parse_tag(semver_tags[0]) if semver_tags else (0, 0, 0)
+
+          latest_idx_ver = (0, 0, 0)
+          index_path = "z2m_converter/ota-index.json"
+          if os.path.exists(index_path):
+              with open(index_path, "r", encoding="utf-8") as f:
+                  entries = json.load(f)
+              file_versions = []
+              for entry in entries:
+                  try:
+                      file_versions.append(int(entry["fileVersion"]))
+                  except (KeyError, TypeError, ValueError):
+                      pass
+              if file_versions:
+                  max_file_version = max(file_versions)
+                  latest_idx_ver = (
+                      (max_file_version >> 24) & 0xFF,
+                      (max_file_version >> 16) & 0xFF,
+                      (max_file_version >> 8) & 0xFF,
+                  )
+
+          base = max(latest_tag_ver, latest_idx_ver)
+          major, minor, patch = base
+
+          if bump_part == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif bump_part == "minor":
+              major, minor, patch = major, minor + 1, 0
+          else:
+              major, minor, patch = major, minor, patch + 1
+
+          tag = f"v{major}.{minor}.{patch}"
+          if tag in semver_tags:
+              raise SystemExit(f"Computed tag already exists: {tag}")
+
+          print(f"Latest semver tag source: v{latest_tag_ver[0]}.{latest_tag_ver[1]}.{latest_tag_ver[2]}")
+          print(f"Latest ota-index source: v{latest_idx_ver[0]}.{latest_idx_ver[1]}.{latest_idx_ver[2]}")
+          print(f"Computed next tag ({bump_part}): {tag}")
+
+          with open(output_path, "a", encoding="utf-8") as out:
+              out.write(f"release_tag={tag}\n")
+          PYEOF
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ steps.ver.outputs.release_tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch --tags origin
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null 2>&1; then
+            echo "Tag already exists on origin: ${TAG}"
+            exit 1
+          fi
+
+          git tag "${TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TAG}"
+          echo "Created and pushed tag ${TAG}"
