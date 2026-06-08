@@ -160,19 +160,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.rel.outputs.release_tag }}
         run: |
-          BODY=$(curl -fsSL \
+          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          RESP_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sS \
+            -o "${RESP_FILE}" \
+            -w "%{http_code}" \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
-            | python3 -c "import sys, json; print(json.load(sys.stdin).get('body', '') or '')")
+            "${API_URL}" || true)
+
+          BODY=""
+          if [ "${HTTP_CODE}" = "200" ]; then
+            BODY=$(python3 -c 'import json, sys; print((json.load(open(sys.argv[1], encoding="utf-8")).get("body") or ""))' "${RESP_FILE}")
+            echo "Fetched release notes (${#BODY} chars)"
+          elif [ "${HTTP_CODE}" = "404" ]; then
+            echo "Release ${RELEASE_TAG} not found yet; continuing with empty releaseNotes"
+          else
+            echo "GitHub API returned HTTP ${HTTP_CODE}; continuing with empty releaseNotes"
+          fi
+
+          rm -f "${RESP_FILE}"
+
           # Store multi-line value safely using GITHUB_OUTPUT delimiter
           {
             echo "release_notes<<RELEASE_NOTES_EOF"
             echo "$BODY"
             echo "RELEASE_NOTES_EOF"
           } >> "${GITHUB_OUTPUT}"
-          echo "Fetched release notes (${#BODY} chars)"
 
       - name: Update ota-index.json
         env:
