@@ -58,14 +58,14 @@ jobs:
           latest_idx_ver = (0, 0, 0)
           index_path = "z2m_converter/ota-index.json"
 
-            def decode_from_new_packed(file_version):
+          def decode_from_new_packed(file_version):
               app_word = (file_version >> 16) & 0xFFFF
               major = (app_word >> 12) & 0x0F
               minor = (app_word >> 8) & 0x0F
               patch = app_word & 0xFF
               return (major, minor, patch)
 
-            def decode_from_legacy_bytes(file_version):
+          def decode_from_legacy_bytes(file_version):
               major = (file_version >> 24) & 0xFF
               minor = (file_version >> 16) & 0xFF
               patch = (file_version >> 8) & 0xFF
@@ -77,13 +77,13 @@ jobs:
               decoded_candidates = []
               for entry in entries:
                   try:
-                  file_version = int(entry["fileVersion"])
-                  decoded_candidates.append(decode_from_new_packed(file_version))
-                  decoded_candidates.append(decode_from_legacy_bytes(file_version))
+                    file_version = int(entry["fileVersion"])
+                    decoded_candidates.append(decode_from_new_packed(file_version))
+                    decoded_candidates.append(decode_from_legacy_bytes(file_version))
                   except (KeyError, TypeError, ValueError):
                       pass
               if decoded_candidates:
-                latest_idx_ver = max(decoded_candidates)
+                  latest_idx_ver = max(decoded_candidates)
 
           base = max(latest_tag_ver, latest_idx_ver)
           major, minor, patch = base
