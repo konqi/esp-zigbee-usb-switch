@@ -7,16 +7,13 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ha/esp_zigbee_ha_standard.h"
 #include "esp_zigbee_attribute.h"
-#include "esp_zigbee_ota.h"
-#include "zcl/esp_zigbee_zcl_ota.h"
-#include "zb_osif.h"
+#include "ota.h"
 
 #if !defined ZB_ED_ROLE
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile light (End Device) source code.
@@ -70,116 +67,6 @@ static const char *TAG = "ESP_ZB_USB_SWITCH";
 static uint8_t s_steering_retry_attempt = 0;
 static const char s_build_date_code[] = BUILD_DATE_YYYYMMDD;
 static const char s_sw_build_id[] = ESP_SW_BUILD_ID;
-static bool s_ota_reboot_scheduled = false;
-
-static const char *ota_img_state_to_str(esp_ota_img_states_t state)
-{
-    switch (state)
-    {
-    case ESP_OTA_IMG_NEW:
-        return "new";
-    case ESP_OTA_IMG_PENDING_VERIFY:
-        return "pending_verify";
-    case ESP_OTA_IMG_VALID:
-        return "valid";
-    case ESP_OTA_IMG_INVALID:
-        return "invalid";
-    case ESP_OTA_IMG_ABORTED:
-        return "aborted";
-    case ESP_OTA_IMG_UNDEFINED:
-        return "undefined";
-    default:
-        return "unknown";
-    }
-}
-
-static void log_running_partition_ota_state(const char *prefix)
-{
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    if (!running)
-    {
-        ESP_LOGW(TAG, "%s: running partition unavailable", prefix);
-        return;
-    }
-
-    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
-    esp_err_t state_ret = esp_ota_get_state_partition(running, &ota_state);
-    if (state_ret != ESP_OK)
-    {
-        ESP_LOGW(TAG,
-                 "%s: running=%s subtype=0x%02x state query failed (%s)",
-                 prefix,
-                 running->label,
-                 running->subtype,
-                 esp_err_to_name(state_ret));
-        return;
-    }
-
-    ESP_LOGI(TAG,
-             "%s: running=%s subtype=0x%02x ota_state=%s",
-             prefix,
-             running->label,
-             running->subtype,
-             ota_img_state_to_str(ota_state));
-}
-
-static void ota_finish_reboot_task(void *arg)
-{
-    (void)arg;
-    /* Notify Zigbee bootloader to switch to the new OTA partition on next boot */
-    esp_err_t bl_ret = zb_osif_bootloader_run_after_reboot();
-    if (bl_ret == ESP_OK)
-    {
-        ESP_LOGI(TAG, "Bootloader prepared to switch OTA partition; rebooting");
-        /* Give the Zigbee stack a moment to finalize the handoff before reboot */
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_restart();
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Failed to prepare bootloader for OTA partition switch (%s); reboot aborted",
-                 esp_err_to_name(bl_ret));
-    }
-}
-
-static void confirm_running_ota_image_if_pending(void)
-{
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    if (!running)
-    {
-        ESP_LOGW(TAG, "Could not get running partition to verify OTA state");
-        return;
-    }
-
-    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
-    esp_err_t state_ret = esp_ota_get_state_partition(running, &ota_state);
-    if (state_ret != ESP_OK)
-    {
-        ESP_LOGW(TAG, "Failed to query OTA state for running partition (%s)", esp_err_to_name(state_ret));
-        return;
-    }
-
-    if (ota_state == ESP_OTA_IMG_PENDING_VERIFY)
-    {
-        esp_err_t mark_ret = esp_ota_mark_app_valid_cancel_rollback();
-        if (mark_ret == ESP_OK)
-        {
-            ESP_LOGI(TAG, "Marked running OTA image valid; rollback canceled");
-        }
-        else
-        {
-            ESP_LOGE(TAG, "Failed to mark OTA image valid (%s)", esp_err_to_name(mark_ret));
-        }
-    }
-    else
-    {
-        ESP_LOGI(TAG, "Running image OTA state is %s", ota_img_state_to_str(ota_state));
-    }
-
-    /* Report to Zigbee bootloader that the new image has booted successfully */
-    zb_osif_bootloader_report_successful_loading();
-    ESP_LOGI(TAG, "Reported successful OTA image loading to bootloader");
-}
 
 static void fill_zcl_string(uint8_t *zb_str, size_t zb_str_size, const char *text)
 {
@@ -205,52 +92,6 @@ static void build_basic_cluster_version_strings(uint32_t file_version, uint8_t *
     (void)file_version;
     fill_zcl_string(sw_build_id, sw_build_id_size, s_sw_build_id);
     fill_zcl_string(date_code, date_code_size, s_build_date_code);
-}
-
-static const char *ota_status_to_str(esp_zb_zcl_ota_upgrade_status_t status)
-{
-    switch (status)
-    {
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_START:
-        return "start";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_APPLY:
-        return "apply";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_RECEIVE:
-        return "receive";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_FINISH:
-        return "finish";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ABORT:
-        return "abort";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_CHECK:
-        return "check";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_OK:
-        return "ok";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ERROR:
-        return "error";
-    case ESP_ZB_ZCL_OTA_UPGRADE_IMAGE_STATUS_NORMAL:
-        return "normal";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_BUSY:
-        return "busy";
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_SERVER_NOT_FOUND:
-        return "server_not_found";
-    default:
-        return "unknown";
-    }
-}
-
-static void configure_ota_query_interval(void)
-{
-    esp_zb_lock_acquire(portMAX_DELAY);
-    esp_err_t ota_ret = esp_zb_ota_upgrade_client_query_interval_set(HA_ESP_LIGHT_ENDPOINT, ESP_OTA_QUERY_INTERVAL_MIN);
-    esp_zb_lock_release();
-    if (ota_ret != ESP_OK)
-    {
-        ESP_LOGW(TAG, "Failed to set OTA query interval (status: %s)", esp_err_to_name(ota_ret));
-    }
-    else
-    {
-        ESP_LOGI(TAG, "OTA query interval set to %u minutes", (unsigned int)ESP_OTA_QUERY_INTERVAL_MIN);
-    }
 }
 
 // Note: On my board GPIO_NUM_21 is soldered as input to the external button.
@@ -446,7 +287,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                     s_steering_retry_attempt = 0;
                     ESP_LOGI(TAG, "Device rebooted and restored network (PAN ID: 0x%04hx, Channel:%d, Short Address: 0x%04hx)",
                              esp_zb_get_pan_id(), esp_zb_get_current_channel(), short_addr);
-                    configure_ota_query_interval();
+                    ota_configure_query_interval(HA_ESP_LIGHT_ENDPOINT);
                 }
             }
         }
@@ -468,7 +309,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                      extended_pan_id[3], extended_pan_id[2], extended_pan_id[1], extended_pan_id[0],
                      esp_zb_get_pan_id(), esp_zb_get_current_channel(), esp_zb_get_short_address());
 
-            configure_ota_query_interval();
+            ota_configure_query_interval(HA_ESP_LIGHT_ENDPOINT);
 
             // read values once after zigbee initialization
             gpio_read_once();
@@ -628,42 +469,11 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
         break;
     }
     case ESP_ZB_CORE_OTA_UPGRADE_VALUE_CB_ID:
-    {
-        const esp_zb_zcl_ota_upgrade_value_message_t *ota_msg = (const esp_zb_zcl_ota_upgrade_value_message_t *)message;
-        ESP_LOGI(TAG,
-                 "OTA status=%s (0x%04x), version=0x%08lx, image_type=0x%04x, payload_size=%u",
-                 ota_status_to_str(ota_msg->upgrade_status),
-                 ota_msg->upgrade_status,
-                 (unsigned long)ota_msg->ota_header.file_version,
-                 ota_msg->ota_header.image_type,
-                 (unsigned int)ota_msg->payload_size);
-        if (ota_msg->upgrade_status == ESP_ZB_ZCL_OTA_UPGRADE_STATUS_FINISH && !s_ota_reboot_scheduled)
-        {
-            s_ota_reboot_scheduled = true;
-            BaseType_t task_ret = xTaskCreate(ota_finish_reboot_task, "ota_finish_reboot", 2048, NULL, 5, NULL);
-            if (task_ret != pdPASS)
-            {
-                ESP_LOGE(TAG, "Failed to schedule OTA reboot task");
-                s_ota_reboot_scheduled = false;
-            }
-            else
-            {
-                ESP_LOGI(TAG, "Scheduled forced reboot after OTA finish");
-            }
-        }
+        ota_handle_upgrade_value(message);
         break;
-    }
     case ESP_ZB_CORE_OTA_UPGRADE_QUERY_IMAGE_RESP_CB_ID:
-    {
-        const esp_zb_zcl_ota_upgrade_query_image_resp_message_t *ota_resp = (const esp_zb_zcl_ota_upgrade_query_image_resp_message_t *)message;
-        ESP_LOGI(TAG,
-                 "OTA query response status=0x%02x, version=0x%08lx, image_type=0x%04x, size=%lu",
-                 ota_resp->query_status,
-                 (unsigned long)ota_resp->file_version,
-                 ota_resp->image_type,
-                 (unsigned long)ota_resp->image_size);
+        ota_handle_query_image_resp(message);
         break;
-    }
     default:
         ESP_LOGW(TAG, "Receive Zigbee action(0x%02x) callback", callback_id);
         break;
@@ -776,9 +586,9 @@ void app_main(void)
         .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
     };
     ESP_LOGI(TAG, "Reset reason: %d", (int)esp_reset_reason());
-    log_running_partition_ota_state("Boot before confirm");
-    confirm_running_ota_image_if_pending();
-    log_running_partition_ota_state("Boot after confirm");
+    ota_log_partition_state("Boot before confirm");
+    ota_confirm_image_if_pending();
+    ota_log_partition_state("Boot after confirm");
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);

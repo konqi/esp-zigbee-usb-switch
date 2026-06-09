@@ -1,4 +1,4 @@
-idf_component_register(SRCS "zigbee_usb_switch.c" "toggle.c" "gpio_input.c" "light_driver.c" "zcl_utility.c"
+idf_component_register(SRCS "zigbee_usb_switch.c" "toggle.c" "gpio_input.c" "light_driver.c" "zcl_utility.c" "ota.c"
                     INCLUDE_DIRS ".")
 
 # OTA metadata: can override at configure time, e.g.
