@@ -101,10 +101,58 @@ static const char *ota_status_to_str(esp_zb_zcl_ota_upgrade_status_t status)
 
 static bool s_ota_reboot_scheduled = false;
 
+static void ota_log_partition_details(const char *prefix, const esp_partition_t *partition)
+{
+    if (!partition)
+    {
+        ESP_LOGI(TAG, "%s: <none>", prefix);
+        return;
+    }
+
+    esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+    esp_err_t err = esp_ota_get_state_partition(partition, &state);
+    if (err == ESP_OK)
+    {
+        ESP_LOGI(TAG, "%s: '%s' subtype=0x%02x addr=0x%08lx state=%s",
+                 prefix,
+                 partition->label,
+                 partition->subtype,
+                 (unsigned long)partition->address,
+                 ota_img_state_to_str(state));
+        return;
+    }
+
+    ESP_LOGI(TAG, "%s: '%s' subtype=0x%02x addr=0x%08lx state_query=%s",
+             prefix,
+             partition->label,
+             partition->subtype,
+             (unsigned long)partition->address,
+             esp_err_to_name(err));
+}
+
+static void ota_log_boot_selection(const char *prefix)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    const esp_partition_t *next = running ? esp_ota_get_next_update_partition(running) : NULL;
+    const esp_partition_t *ota_0 = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+    const esp_partition_t *ota_1 = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+
+    ESP_LOGI(TAG, "%s", prefix);
+    ota_log_partition_details("  running", running);
+    ota_log_partition_details("  boot", boot);
+    ota_log_partition_details("  next_update", next);
+    ota_log_partition_details("  ota_0", ota_0);
+    ota_log_partition_details("  ota_1", ota_1);
+}
+
 static void ota_finish_reboot_task(void *arg)
 {
     (void)arg;
     ESP_LOGI(TAG, "finish received; rebooting in 500 ms");
+    ota_log_boot_selection("boot selection before restart");
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
 
@@ -151,6 +199,8 @@ void ota_configure_query_interval(uint8_t endpoint)
 
 void ota_confirm_image_if_pending(void)
 {
+    ota_log_boot_selection("boot selection at confirm");
+
     const esp_partition_t *running = esp_ota_get_running_partition();
     if (!running)
     {
