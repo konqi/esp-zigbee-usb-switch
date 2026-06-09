@@ -99,7 +99,16 @@ static const char *ota_status_to_str(esp_zb_zcl_ota_upgrade_status_t status)
     }
 }
 
+/* Zigbee OTA sub-element header: 2-byte tag + 4-byte length (Zigbee spec 11.4.2) */
+#define OTA_ELEMENT_HEADER_LEN 6
+#define OTA_ELEMENT_TAG_UPGRADE_IMAGE 0x0000
+
 static bool s_ota_reboot_scheduled = false;
+static esp_ota_handle_t s_ota_handle = 0;
+static const esp_partition_t *s_ota_update_partition = NULL;
+static uint32_t s_ota_total_size = 0;
+static uint32_t s_ota_offset = 0;
+static bool s_ota_element_header_received = false;
 
 static void ota_log_partition_details(const char *prefix, const esp_partition_t *partition)
 {
@@ -151,35 +160,8 @@ static void ota_log_boot_selection(const char *prefix)
 static void ota_finish_reboot_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "finish received; activating new partition and rebooting");
-
-    /*
-     * The Zigbee OTA library writes and verifies the image (apply status)
-     * but does not update otadata to activate the new slot.  We must call
-     * esp_ota_set_boot_partition() here, after apply has completed, so the
-     * bootloader switches to the newly-written partition on the next boot.
-     */
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    const esp_partition_t *update = esp_ota_get_next_update_partition(running);
-    if (update != NULL)
-    {
-        esp_err_t err = esp_ota_set_boot_partition(update);
-        if (err == ESP_OK)
-        {
-            ESP_LOGI(TAG, "boot partition set to '%s' (0x%08lx)", update->label, (unsigned long)update->address);
-        }
-        else
-        {
-            ESP_LOGE(TAG, "esp_ota_set_boot_partition('%s') failed: %s — will still reboot",
-                     update->label, esp_err_to_name(err));
-        }
-    }
-    else
-    {
-        ESP_LOGE(TAG, "no update partition found; rebooting anyway");
-    }
-
-    ota_log_boot_selection("boot selection after activation");
+    ESP_LOGI(TAG, "finish: rebooting in 500 ms");
+    ota_log_boot_selection("boot selection before restart");
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
 
@@ -262,6 +244,56 @@ void ota_confirm_image_if_pending(void)
     zb_osif_bootloader_report_successful_loading();
 }
 
+/*
+ * Strip the Zigbee OTA sub-element header from the first RECEIVE block.
+ *
+ * The Zigbee OTA file format (spec 11.4.2) places all firmware data inside a
+ * "Upgrade Image" sub-element. Each sub-element begins with a 6-byte header:
+ *   - tag identifier  (uint16_le)  — 0x0000 = Upgrade Image
+ *   - length          (uint32_le)  — byte count of data that follows
+ *
+ * The Zigbee stack strips the outer OTA file header before delivering payloads,
+ * but does NOT strip sub-element headers.  The first RECEIVE payload therefore
+ * starts with these 6 bytes, not with the ESP image magic byte (0xE9).
+ * Writing them verbatim to flash causes "invalid magic byte" at boot.
+ *
+ * outbuf/outlen are set to the slice of payload that should be written.
+ */
+static esp_err_t ota_element_strip_header(const void *payload, uint16_t payload_size,
+                                          void **outbuf, uint16_t *outlen)
+{
+    if (!s_ota_element_header_received)
+    {
+        if (!payload || payload_size <= OTA_ELEMENT_HEADER_LEN)
+        {
+            ESP_LOGE(TAG, "receive: first block too small to contain element header (%u B)", payload_size);
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        uint16_t tag = *(const uint16_t *)payload;
+        uint32_t length = *(const uint32_t *)((const uint8_t *)payload + sizeof(tag));
+
+        ESP_LOGI(TAG, "receive: element tag=0x%04x length=%lu", (unsigned)tag, (unsigned long)length);
+
+        if (tag != OTA_ELEMENT_TAG_UPGRADE_IMAGE)
+        {
+            ESP_LOGE(TAG, "receive: unsupported element tag 0x%04x (expected 0x%04x)",
+                     (unsigned)tag, OTA_ELEMENT_TAG_UPGRADE_IMAGE);
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        s_ota_element_header_received = true;
+        *outbuf = (void *)((const uint8_t *)payload + OTA_ELEMENT_HEADER_LEN);
+        *outlen = payload_size - OTA_ELEMENT_HEADER_LEN;
+    }
+    else
+    {
+        *outbuf = (void *)payload;
+        *outlen = payload_size;
+    }
+    return ESP_OK;
+}
+
 void ota_handle_upgrade_value(const void *message)
 {
     const esp_zb_zcl_ota_upgrade_value_message_t *msg =
@@ -274,19 +306,141 @@ void ota_handle_upgrade_value(const void *message)
              msg->ota_header.image_type,
              (unsigned int)msg->payload_size);
 
-    if (msg->upgrade_status == ESP_ZB_ZCL_OTA_UPGRADE_STATUS_FINISH && !s_ota_reboot_scheduled)
+    switch (msg->upgrade_status)
     {
-        s_ota_reboot_scheduled = true;
-        BaseType_t ret = xTaskCreate(ota_finish_reboot_task, "ota_reboot", 2048, NULL, 5, NULL);
-        if (ret != pdPASS)
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_START:
+    {
+        s_ota_total_size = msg->ota_header.image_size;
+        s_ota_offset = 0;
+        s_ota_element_header_received = false;
+
+        s_ota_update_partition = esp_ota_get_next_update_partition(NULL);
+        if (!s_ota_update_partition)
         {
-            ESP_LOGE(TAG, "failed to create reboot task");
-            s_ota_reboot_scheduled = false;
+            ESP_LOGE(TAG, "start: no OTA update partition found");
+            break;
+        }
+        esp_err_t err = esp_ota_begin(s_ota_update_partition, 0, &s_ota_handle);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+            s_ota_update_partition = NULL;
         }
         else
         {
-            ESP_LOGI(TAG, "reboot task scheduled");
+            ESP_LOGI(TAG, "start: writing to '%s' (0x%08lx), total=%lu B",
+                     s_ota_update_partition->label,
+                     (unsigned long)s_ota_update_partition->address,
+                     (unsigned long)s_ota_total_size);
         }
+        break;
+    }
+
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_RECEIVE:
+        if (s_ota_update_partition && msg->payload_size > 0 && msg->payload)
+        {
+            s_ota_offset += msg->payload_size;
+
+            void *write_buf = NULL;
+            uint16_t write_len = 0;
+            esp_err_t err = ota_element_strip_header(msg->payload, msg->payload_size,
+                                                     &write_buf, &write_len);
+            if (err != ESP_OK)
+            {
+                break;
+            }
+
+            if (write_len > 0)
+            {
+                err = esp_ota_write(s_ota_handle, write_buf, write_len);
+                if (err != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
+                }
+            }
+        }
+        break;
+
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_CHECK:
+        if (s_ota_offset != s_ota_total_size)
+        {
+            ESP_LOGE(TAG, "check: size mismatch received=%lu expected=%lu",
+                     (unsigned long)s_ota_offset, (unsigned long)s_ota_total_size);
+        }
+        else
+        {
+            ESP_LOGI(TAG, "check: all %lu B received OK", (unsigned long)s_ota_total_size);
+        }
+        /* Reset transfer counters; partition/handle are used in FINISH. */
+        s_ota_offset = 0;
+        s_ota_total_size = 0;
+        s_ota_element_header_received = false;
+        break;
+
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_APPLY:
+        /* The stack fires APPLY after CHECK passes; no action needed here.
+         * esp_ota_end() and esp_ota_set_boot_partition() happen in FINISH. */
+        break;
+
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_FINISH:
+        if (s_ota_update_partition)
+        {
+            esp_err_t err = esp_ota_end(s_ota_handle);
+            if (err != ESP_OK)
+            {
+                ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+                break;
+            }
+            err = esp_ota_set_boot_partition(s_ota_update_partition);
+            if (err == ESP_OK)
+            {
+                ESP_LOGI(TAG, "finish: boot partition set to '%s' (0x%08lx)",
+                         s_ota_update_partition->label,
+                         (unsigned long)s_ota_update_partition->address);
+            }
+            else
+            {
+                ESP_LOGE(TAG, "esp_ota_set_boot_partition('%s') failed: %s",
+                         s_ota_update_partition->label, esp_err_to_name(err));
+                break;
+            }
+        }
+        else
+        {
+            ESP_LOGE(TAG, "finish: no update partition (was START missed?)");
+        }
+
+        if (!s_ota_reboot_scheduled)
+        {
+            s_ota_reboot_scheduled = true;
+            BaseType_t ret = xTaskCreate(ota_finish_reboot_task, "ota_reboot", 2048, NULL, 5, NULL);
+            if (ret != pdPASS)
+            {
+                ESP_LOGE(TAG, "failed to create reboot task");
+                s_ota_reboot_scheduled = false;
+            }
+            else
+            {
+                ESP_LOGI(TAG, "reboot task scheduled");
+            }
+        }
+        break;
+
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ABORT:
+        if (s_ota_update_partition)
+        {
+            esp_ota_abort(s_ota_handle);
+            s_ota_update_partition = NULL;
+            s_ota_handle = 0;
+        }
+        s_ota_offset = 0;
+        s_ota_total_size = 0;
+        s_ota_element_header_received = false;
+        ESP_LOGW(TAG, "OTA aborted");
+        break;
+
+    default:
+        break;
     }
 }
 
