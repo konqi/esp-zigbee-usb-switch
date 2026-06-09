@@ -23,21 +23,12 @@ static const char *TAG = "OTA";
 
 int32_t zb_osif_bootloader_run_after_reboot(void)
 {
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    const esp_partition_t *update = esp_ota_get_next_update_partition(running);
-    if (update == NULL)
-    {
-        ESP_LOGE(TAG, "osif: cannot find update partition for boot switch");
-        return -1; /* RET_ERROR */
-    }
-    esp_err_t err = esp_ota_set_boot_partition(update);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "osif: esp_ota_set_boot_partition('%s') failed: %s",
-                 update->label, esp_err_to_name(err));
-        return -1; /* RET_ERROR */
-    }
-    ESP_LOGI(TAG, "osif: boot partition set to '%s'", update->label);
+    /*
+     * The OTA apply path in the Zigbee OTA client finalizes and validates
+     * the image. Selecting the boot slot here can be wrong if the stack uses
+     * a different target/flow, so keep this callback as a success no-op.
+     */
+    ESP_LOGI(TAG, "osif: run_after_reboot requested");
     return 0; /* RET_OK */
 }
 
@@ -113,16 +104,12 @@ static bool s_ota_reboot_scheduled = false;
 static void ota_finish_reboot_task(void *arg)
 {
     (void)arg;
-    if (zb_osif_bootloader_run_after_reboot() == 0) /* RET_OK */
-    {
-        ESP_LOGI(TAG, "boot partition switched; rebooting in 500 ms");
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_restart();
-    }
-    else
-    {
-        ESP_LOGE(TAG, "boot partition switch failed; reboot aborted");
-    }
+    ESP_LOGI(TAG, "finish received; rebooting in 500 ms");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+
+    /* esp_restart() should not return, but keep task contract explicit. */
+    vTaskDelete(NULL);
 }
 
 /* --- Public API -------------------------------------------------------------*/
