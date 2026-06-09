@@ -7,6 +7,7 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,6 +28,37 @@ static const char *TAG = "ESP_ZB_USB_SWITCH";
 #define ZB_STEERING_RETRY_MAX_BACKOFF_STEPS 5
 
 static uint8_t s_steering_retry_attempt = 0;
+
+static void confirm_running_ota_image_if_pending(void)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (!running)
+    {
+        ESP_LOGW(TAG, "Could not get running partition to verify OTA state");
+        return;
+    }
+
+    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+    esp_err_t state_ret = esp_ota_get_state_partition(running, &ota_state);
+    if (state_ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to query OTA state for running partition (%s)", esp_err_to_name(state_ret));
+        return;
+    }
+
+    if (ota_state == ESP_OTA_IMG_PENDING_VERIFY)
+    {
+        esp_err_t mark_ret = esp_ota_mark_app_valid_cancel_rollback();
+        if (mark_ret == ESP_OK)
+        {
+            ESP_LOGI(TAG, "Marked running OTA image valid; rollback canceled");
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Failed to mark OTA image valid (%s)", esp_err_to_name(mark_ret));
+        }
+    }
+}
 
 static void fill_zcl_string(uint8_t *zb_str, size_t zb_str_size, const char *text)
 {
@@ -627,6 +659,7 @@ void app_main(void)
         .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
     };
     ESP_ERROR_CHECK(nvs_flash_init());
+    confirm_running_ota_image_if_pending();
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
 }
