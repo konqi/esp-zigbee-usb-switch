@@ -8,6 +8,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -68,6 +69,66 @@ static const char *TAG = "ESP_ZB_USB_SWITCH";
 static uint8_t s_steering_retry_attempt = 0;
 static const char s_build_date_code[] = BUILD_DATE_YYYYMMDD;
 static const char s_sw_build_id[] = ESP_SW_BUILD_ID;
+static bool s_ota_reboot_scheduled = false;
+
+static const char *ota_img_state_to_str(esp_ota_img_states_t state)
+{
+    switch (state)
+    {
+    case ESP_OTA_IMG_NEW:
+        return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY:
+        return "pending_verify";
+    case ESP_OTA_IMG_VALID:
+        return "valid";
+    case ESP_OTA_IMG_INVALID:
+        return "invalid";
+    case ESP_OTA_IMG_ABORTED:
+        return "aborted";
+    case ESP_OTA_IMG_UNDEFINED:
+        return "undefined";
+    default:
+        return "unknown";
+    }
+}
+
+static void log_running_partition_ota_state(const char *prefix)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (!running)
+    {
+        ESP_LOGW(TAG, "%s: running partition unavailable", prefix);
+        return;
+    }
+
+    esp_ota_img_states_t ota_state = ESP_OTA_IMG_UNDEFINED;
+    esp_err_t state_ret = esp_ota_get_state_partition(running, &ota_state);
+    if (state_ret != ESP_OK)
+    {
+        ESP_LOGW(TAG,
+                 "%s: running=%s subtype=0x%02x state query failed (%s)",
+                 prefix,
+                 running->label,
+                 running->subtype,
+                 esp_err_to_name(state_ret));
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "%s: running=%s subtype=0x%02x ota_state=%s",
+             prefix,
+             running->label,
+             running->subtype,
+             ota_img_state_to_str(ota_state));
+}
+
+static void ota_finish_reboot_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ESP_LOGW(TAG, "Forcing reboot after OTA finish to boot updated image");
+    esp_restart();
+}
 
 static void confirm_running_ota_image_if_pending(void)
 {
@@ -97,6 +158,10 @@ static void confirm_running_ota_image_if_pending(void)
         {
             ESP_LOGE(TAG, "Failed to mark OTA image valid (%s)", esp_err_to_name(mark_ret));
         }
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Running image OTA state is %s", ota_img_state_to_str(ota_state));
     }
 }
 
@@ -556,6 +621,20 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
                  (unsigned long)ota_msg->ota_header.file_version,
                  ota_msg->ota_header.image_type,
                  (unsigned int)ota_msg->payload_size);
+        if (ota_msg->upgrade_status == ESP_ZB_ZCL_OTA_UPGRADE_STATUS_FINISH && !s_ota_reboot_scheduled)
+        {
+            s_ota_reboot_scheduled = true;
+            BaseType_t task_ret = xTaskCreate(ota_finish_reboot_task, "ota_finish_reboot", 2048, NULL, 5, NULL);
+            if (task_ret != pdPASS)
+            {
+                ESP_LOGE(TAG, "Failed to schedule OTA reboot task");
+                s_ota_reboot_scheduled = false;
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Scheduled forced reboot after OTA finish");
+            }
+        }
         break;
     }
     case ESP_ZB_CORE_OTA_UPGRADE_QUERY_IMAGE_RESP_CB_ID:
@@ -680,7 +759,10 @@ void app_main(void)
         .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
         .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
     };
+    ESP_LOGI(TAG, "Reset reason: %d", (int)esp_reset_reason());
+    log_running_partition_ota_state("Boot before confirm");
     confirm_running_ota_image_if_pending();
+    log_running_partition_ota_state("Boot after confirm");
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
