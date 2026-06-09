@@ -16,6 +16,7 @@
 #include "esp_zigbee_attribute.h"
 #include "esp_zigbee_ota.h"
 #include "zcl/esp_zigbee_zcl_ota.h"
+#include "zb_osif.h"
 
 #if !defined ZB_ED_ROLE
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile light (End Device) source code.
@@ -125,9 +126,20 @@ static void log_running_partition_ota_state(const char *prefix)
 static void ota_finish_reboot_task(void *arg)
 {
     (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    ESP_LOGW(TAG, "Forcing reboot after OTA finish to boot updated image");
-    esp_restart();
+    /* Notify Zigbee bootloader to switch to the new OTA partition on next boot */
+    esp_err_t bl_ret = zb_osif_bootloader_run_after_reboot();
+    if (bl_ret == ESP_OK)
+    {
+        ESP_LOGI(TAG, "Bootloader prepared to switch OTA partition; rebooting");
+        /* Give the Zigbee stack a moment to finalize the handoff before reboot */
+        vTaskDelay(pdMS_TO_TICKS(500));
+        esp_restart();
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to prepare bootloader for OTA partition switch (%s); reboot aborted",
+                 esp_err_to_name(bl_ret));
+    }
 }
 
 static void confirm_running_ota_image_if_pending(void)
@@ -163,6 +175,10 @@ static void confirm_running_ota_image_if_pending(void)
     {
         ESP_LOGI(TAG, "Running image OTA state is %s", ota_img_state_to_str(ota_state));
     }
+
+    /* Report to Zigbee bootloader that the new image has booted successfully */
+    zb_osif_bootloader_report_successful_loading();
+    ESP_LOGI(TAG, "Reported successful OTA image loading to bootloader");
 }
 
 static void fill_zcl_string(uint8_t *zb_str, size_t zb_str_size, const char *text)
