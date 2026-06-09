@@ -27,7 +27,47 @@ static const char *TAG = "ESP_ZB_USB_SWITCH";
 #define ZB_STEERING_RETRY_MAX_DELAY_MS 60000
 #define ZB_STEERING_RETRY_MAX_BACKOFF_STEPS 5
 
+#define BUILD_MONTH_IS_JAN (__DATE__[0] == 'J' && __DATE__[1] == 'a' && __DATE__[2] == 'n')
+#define BUILD_MONTH_IS_FEB (__DATE__[0] == 'F')
+#define BUILD_MONTH_IS_MAR (__DATE__[0] == 'M' && __DATE__[2] == 'r')
+#define BUILD_MONTH_IS_APR (__DATE__[0] == 'A' && __DATE__[1] == 'p')
+#define BUILD_MONTH_IS_MAY (__DATE__[0] == 'M' && __DATE__[2] == 'y')
+#define BUILD_MONTH_IS_JUN (__DATE__[0] == 'J' && __DATE__[2] == 'n')
+#define BUILD_MONTH_IS_JUL (__DATE__[0] == 'J' && __DATE__[2] == 'l')
+#define BUILD_MONTH_IS_AUG (__DATE__[0] == 'A' && __DATE__[1] == 'u')
+#define BUILD_MONTH_IS_SEP (__DATE__[0] == 'S')
+#define BUILD_MONTH_IS_OCT (__DATE__[0] == 'O')
+#define BUILD_MONTH_IS_NOV (__DATE__[0] == 'N')
+#define BUILD_MONTH_IS_DEC (__DATE__[0] == 'D')
+
+#define BUILD_MONTH_CH0 \
+    (BUILD_MONTH_IS_OCT || BUILD_MONTH_IS_NOV || BUILD_MONTH_IS_DEC ? '1' : '0')
+
+#define BUILD_MONTH_CH1                                  \
+    (BUILD_MONTH_IS_JAN ? '1' : BUILD_MONTH_IS_FEB ? '2' \
+                            : BUILD_MONTH_IS_MAR   ? '3' \
+                            : BUILD_MONTH_IS_APR   ? '4' \
+                            : BUILD_MONTH_IS_MAY   ? '5' \
+                            : BUILD_MONTH_IS_JUN   ? '6' \
+                            : BUILD_MONTH_IS_JUL   ? '7' \
+                            : BUILD_MONTH_IS_AUG   ? '8' \
+                            : BUILD_MONTH_IS_SEP   ? '9' \
+                            : BUILD_MONTH_IS_OCT   ? '0' \
+                            : BUILD_MONTH_IS_NOV   ? '1' \
+                                                   : '2')
+
+#define BUILD_DAY_CH0 (__DATE__[4] == ' ' ? '0' : __DATE__[4])
+#define BUILD_DAY_CH1 (__DATE__[5])
+
+#define BUILD_DATE_YYYYMMDD {__DATE__[7], __DATE__[8], __DATE__[9], __DATE__[10], BUILD_MONTH_CH0, BUILD_MONTH_CH1, BUILD_DAY_CH0, BUILD_DAY_CH1, '\0'}
+
+#ifndef ESP_SW_BUILD_ID
+#define ESP_SW_BUILD_ID "0.0.0"
+#endif
+
 static uint8_t s_steering_retry_attempt = 0;
+static const char s_build_date_code[] = BUILD_DATE_YYYYMMDD;
+static const char s_sw_build_id[] = ESP_SW_BUILD_ID;
 
 static void confirm_running_ota_image_if_pending(void)
 {
@@ -81,27 +121,9 @@ static void fill_zcl_string(uint8_t *zb_str, size_t zb_str_size, const char *tex
 static void build_basic_cluster_version_strings(uint32_t file_version, uint8_t *sw_build_id, size_t sw_build_id_size,
                                                 uint8_t *date_code, size_t date_code_size)
 {
-    uint8_t app_release = (file_version >> 24) & 0xFF;
-    uint8_t app_build = (file_version >> 16) & 0xFF;
-    uint8_t stack_release = (file_version >> 8) & 0xFF;
-    uint8_t stack_build = file_version & 0xFF;
-
-    char sw_build_id_text[32] = {0};
-    char date_code_text[16] = {0};
-
-    (void)snprintf(sw_build_id_text, sizeof(sw_build_id_text), "%u.%u.%u.%u",
-                   (unsigned int)app_release,
-                   (unsigned int)app_build,
-                   (unsigned int)stack_release,
-                   (unsigned int)stack_build);
-
-    (void)snprintf(date_code_text, sizeof(date_code_text), "%04u%02u%02u",
-                   2000U + (unsigned int)app_release,
-                   (unsigned int)((app_build % 12U) + 1U),
-                   (unsigned int)((stack_release % 28U) + 1U));
-
-    fill_zcl_string(sw_build_id, sw_build_id_size, sw_build_id_text);
-    fill_zcl_string(date_code, date_code_size, date_code_text);
+    (void)file_version;
+    fill_zcl_string(sw_build_id, sw_build_id_size, s_sw_build_id);
+    fill_zcl_string(date_code, date_code_size, s_build_date_code);
 }
 
 static const char *ota_status_to_str(esp_zb_zcl_ota_upgrade_status_t status)
