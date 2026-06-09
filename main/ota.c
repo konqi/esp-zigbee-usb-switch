@@ -151,8 +151,35 @@ static void ota_log_boot_selection(const char *prefix)
 static void ota_finish_reboot_task(void *arg)
 {
     (void)arg;
-    ESP_LOGI(TAG, "finish received; rebooting in 500 ms");
-    ota_log_boot_selection("boot selection before restart");
+    ESP_LOGI(TAG, "finish received; activating new partition and rebooting");
+
+    /*
+     * The Zigbee OTA library writes and verifies the image (apply status)
+     * but does not update otadata to activate the new slot.  We must call
+     * esp_ota_set_boot_partition() here, after apply has completed, so the
+     * bootloader switches to the newly-written partition on the next boot.
+     */
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *update = esp_ota_get_next_update_partition(running);
+    if (update != NULL)
+    {
+        esp_err_t err = esp_ota_set_boot_partition(update);
+        if (err == ESP_OK)
+        {
+            ESP_LOGI(TAG, "boot partition set to '%s' (0x%08lx)", update->label, (unsigned long)update->address);
+        }
+        else
+        {
+            ESP_LOGE(TAG, "esp_ota_set_boot_partition('%s') failed: %s — will still reboot",
+                     update->label, esp_err_to_name(err));
+        }
+    }
+    else
+    {
+        ESP_LOGE(TAG, "no update partition found; rebooting anyway");
+    }
+
+    ota_log_boot_selection("boot selection after activation");
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
 
