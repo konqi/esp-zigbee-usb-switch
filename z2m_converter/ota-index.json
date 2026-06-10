@@ -1,5 +1,15 @@
 [
   {
+    "fileVersion": 353179144,
+    "fileSize": 564574,
+    "url": "https://github.com/konqi/esp-zigbee-usb-switch/releases/download/v1.5.13/zigbee-usb-switch-v1.5.13.ota",
+    "imageType": 1,
+    "manufacturerCode": 4891,
+    "modelId": "zigbee-usb-switch",
+    "manufacturerName": "KONQI",
+    "sha512": "9a7567080a8245dfa6d42a184c7cbc65f6f61012641ca8281ec1bb500459a78d57fd747e3ca894c5609b557f6763b0e0c61a3bfd17cdb4e8aa2895b8a9f66b48"
+  },
+  {
     "fileVersion": 353113608,
     "fileSize": 564334,
     "url": "https://github.com/konqi/esp-zigbee-usb-switch/releases/download/v1.5.12/zigbee-usb-switch-v1.5.12.ota",
