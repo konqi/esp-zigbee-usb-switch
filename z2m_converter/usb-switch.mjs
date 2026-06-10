@@ -1,9 +1,9 @@
 // put this file in your zigbee2mqtt/data/external_converters folder (create folder if it doesn't exist)
+import { identify, onOff } from "zigbee-herdsman-converters/lib/modernExtend";
 import {
-  identify,
-  onOff,
-} from "zigbee-herdsman-converters/lib/modernExtend";
-import { presets as e, access as ea } from "zigbee-herdsman-converters/lib/exposes";
+  presets as e,
+  access as ea,
+} from "zigbee-herdsman-converters/lib/exposes";
 import reporting from "zigbee-herdsman-converters/lib/reporting";
 import utils from "zigbee-herdsman-converters/lib/utils";
 
@@ -29,7 +29,7 @@ const switchLocalOutput = {
     await entity.write(
       "genMultistateValue",
       { presentValue: channelValues.indexOf(value) },
-      utils.getOptions(meta.mapped, entity)
+      utils.getOptions(meta.mapped, entity),
     );
     return { state: { channel: value } };
   },
@@ -58,12 +58,14 @@ export default {
     const endpoint = device.getEndpoint(10);
     // await endpoint.read("genMultistateValue", ["presentValue"]);
     await endpoint.bind("genMultistateValue", coordinatorEndpoint);
-    await endpoint.configureReporting("genMultistateValue", {
-      attribute: "presentValue",
-      minimumReportInterval: 0,
-      maximumReportInterval: 3600,
-      reportableChange: 1,
-    });
+    await endpoint.configureReporting("genMultistateValue", [
+      {
+        attribute: "presentValue",
+        minimumReportInterval: 0,
+        maximumReportInterval: 3600,
+        reportableChange: 1,
+      },
+    ]);
   },
   meta: {},
 };
