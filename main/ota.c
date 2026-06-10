@@ -339,6 +339,13 @@ void ota_handle_upgrade_value(const void *message)
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_RECEIVE:
         if (s_ota_update_partition && msg->payload_size > 0 && msg->payload)
         {
+            if (s_ota_total_size == 0 && msg->ota_header.image_size > 0)
+            {
+                s_ota_total_size = msg->ota_header.image_size;
+                ESP_LOGI(TAG, "receive: discovered total image size=%lu B",
+                         (unsigned long)s_ota_total_size);
+            }
+
             s_ota_offset += msg->payload_size;
 
             void *write_buf = NULL;
@@ -362,7 +369,12 @@ void ota_handle_upgrade_value(const void *message)
         break;
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_CHECK:
-        if (s_ota_offset != s_ota_total_size)
+        if (s_ota_total_size == 0)
+        {
+            ESP_LOGW(TAG, "check: expected image size unavailable, received=%lu B",
+                     (unsigned long)s_ota_offset);
+        }
+        else if (s_ota_offset != s_ota_total_size)
         {
             ESP_LOGE(TAG, "check: size mismatch received=%lu expected=%lu",
                      (unsigned long)s_ota_offset, (unsigned long)s_ota_total_size);
